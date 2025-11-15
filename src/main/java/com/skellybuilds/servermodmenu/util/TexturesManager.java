@@ -18,13 +18,14 @@ public class TexturesManager {
 
 		try {
 			// Create a NativeImage from the byte array
+			NativeImageBackedTexture texture;
+
 			NativeImage nativeImage = NativeImage.read(new ByteArrayInputStream(imageBytes));
 
-			// Create a NativeImageBackedTexture from the NativeImage
-			NativeImageBackedTexture texture = new NativeImageBackedTexture(nativeImage);
+			texture = new NativeImageBackedTexture(() -> Identifier.of(ModMenu.MOD_ID, texturePath).toString(), nativeImage);
 
 			// Create an Identifier for the texture
-			Identifier textureIdentifier = new Identifier(ModMenu.MOD_ID, texturePath);
+			Identifier textureIdentifier = Identifier.of(ModMenu.MOD_ID, texturePath);
 
 			// Register the texture with Minecraft's texture manager
 			MinecraftClient.getInstance().getTextureManager().registerTexture(textureIdentifier, texture);

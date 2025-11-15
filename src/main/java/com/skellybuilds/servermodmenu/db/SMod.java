@@ -60,9 +60,9 @@ public class SMod {
 	}
 
 	public static class Contact {
-		private String homepage;
-		private String sources;
-		private String issues;
+		private String homepage = "";
+		private String sources = "";
+		private String issues = "";
 
 		public Contact(){
 

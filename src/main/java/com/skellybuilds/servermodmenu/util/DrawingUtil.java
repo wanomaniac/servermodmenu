@@ -26,7 +26,7 @@ public class DrawingUtil {
 		if (!ModMenuConfig.RANDOM_JAVA_COLORS.getValue()) {
 			color = 0xFFDD5656;
 		}
-		RenderSystem.setShaderColor(1f, 1f, 1f, 1f);
+//		RenderSystem.setShaderColor(1f, 1f, 1f, 1f);
 		DrawContext.fill(x, y, x + width, y + height, color);
 	}
 
@@ -37,7 +37,7 @@ public class DrawingUtil {
 		if (!ModMenuConfig.RANDOM_JAVA_COLORS.getValue()) {
 			color = 0xFFDD5656;
 		}
-		RenderSystem.setShaderColor(1f, 1f, 1f, 1f);
+//		RenderSystem.setShaderColor(1f, 1f, 1f, 1f);
 		DrawContext.fill(x, y, x + width, y + height, color);
 	}
 

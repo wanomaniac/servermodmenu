@@ -1,13 +1,14 @@
 package com.skellybuilds.servermodmenu.gui.widget.entries;
 import com.skellybuilds.servermodmenu.config.ModMenuConfigManager;
 import com.skellybuilds.servermodmenu.gui.EntryButton;
+import net.minecraft.client.gl.RenderPipelines;
 import net.minecraft.client.sound.PositionedSoundInstance;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.skellybuilds.servermodmenu.ModMenu;
 import com.skellybuilds.servermodmenu.config.ModMenuConfig;
 import com.skellybuilds.servermodmenu.db.SMod;
 import com.skellybuilds.servermodmenu.gui.widget.ModListWidget;
-import com.skellybuilds.servermodmenu.gui.widget.UpdateAvailableBadge;
+//import com.skellybuilds.servermodmenu.gui.widget.UpdateAvailableBadge;
 import com.skellybuilds.servermodmenu.util.DrawingUtil;
 import com.skellybuilds.servermodmenu.util.Networking;
 import com.skellybuilds.servermodmenu.util.TexturesManager;
@@ -21,10 +22,8 @@ import net.minecraft.client.texture.NativeImageBackedTexture;
 import net.minecraft.sound.SoundEvents;
 import net.minecraft.text.StringVisitable;
 import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.Language;
-import net.minecraft.util.Util;
+import net.minecraft.util.*;
+import net.minecraft.util.math.ColorHelper;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -35,12 +34,12 @@ import static com.skellybuilds.servermodmenu.ModMenu.LOGGER;
 import static com.skellybuilds.servermodmenu.ModMenu.MainNetwork;
 
 public class ModListEntry extends AlwaysSelectedEntryListWidget.Entry<ModListEntry> {
-	public static final Identifier UNKNOWN_ICON = new Identifier("textures/misc/unknown_pack.png");
-	public static final Identifier DOWNLOAD_ICON = new Identifier("servermodmenu", "textures/gui/download_button.png");
-	public static final Identifier RELOAD_ICON = new Identifier("servermodmenu", "textures/gui/reload_servers.png");
-	public static final Identifier HIDE_ICON = new Identifier("servermodmenu", "textures/gui/hide_button.png");
+	public static final Identifier UNKNOWN_ICON = Identifier.of("textures/misc/unknown_pack.png");
+	public static final Identifier DOWNLOAD_ICON = Identifier.of("servermodmenu", "textures/gui/download_button.png");
+	public static final Identifier RELOAD_ICON = Identifier.of("servermodmenu", "textures/gui/reload_servers.png");
+	public static final Identifier HIDE_ICON = Identifier.of("servermodmenu", "textures/gui/hide_button.png");
 	//private static final Identifier MOD_CONFIGURATION_ICON = new Identifier("servermodmenu", "textures/gui/mod_configuration.png");
-	private static final Identifier ERROR_ICON = new Identifier("minecraft", "textures/gui/world_selection.png");
+	private static final Identifier ERROR_ICON = Identifier.of("minecraft", "textures/gui/world_selection.png");
 
 	protected final MinecraftClient client;
 	public Mod mod;
@@ -54,7 +53,7 @@ public class ModListEntry extends AlwaysSelectedEntryListWidget.Entry<ModListEnt
 	public String serverName;
 	public boolean isFirst = false;
 	public Thread serverStat;
-	public Networking.SocketStatusLoop serverStatR;
+//	public Networking.SocketStatusLoop serverStatR;
 	public boolean renderSvnNO = false;
 	private int ButtonX;
 	private int ButtonY;
@@ -197,22 +196,27 @@ if(netER){
 	}
 
 	private void reloadServer(EntryButton button){
-		MainNetwork.reloadServer(serverName);
-		button.active = false;
-		new Thread(() -> {
-			while (true) {
-				if (MainNetwork.isNthreadsDone()) {
-					this.list.reloadFilters();
-					button.active = true;
-					break;
-				}
-				try {
-					Thread.sleep(750);
-				} catch (InterruptedException e) {
-					LOGGER.error(e.toString());
-				}
-			}
-		}).start();
+//		MainNetwork.reloadServer(serverName);
+		MainNetwork.disconnect(serverName);
+		ModMenu.ConnectAndDetectPort(serverName, MainNetwork);
+		ModMenu.LoadServer(serverName, MainNetwork);
+		button.active = true;
+		this.list.reloadFilters();
+
+//		new Thread(() -> {
+//			while (true) {
+//				 {
+//					this.list.reloadFilters();
+//					button.active = true;
+//					break;
+//				}
+//				try {
+//					Thread.sleep(750);
+//				} catch (InterruptedException e) {
+//					LOGGER.error(e.toString());
+//				}
+//			}
+//		}).start();
 	}
 
 	EntryButton testB; // Download Button
@@ -241,18 +245,18 @@ if(netER){
 		this.client = MinecraftClient.getInstance();
 		this.serverName = svn;
 		this.isFirst = isF;
-		if(isF){
-			if(ModMenu.socketLoops.get(svn) != null){
-				serverStatR = ModMenu.socketLoops.get(svn);
-				serverStat = new Thread(serverStatR);
-				serverStat.start();
-			} else {
-				serverStatR = new Networking.SocketStatusLoop(svn);
-				ModMenu.socketLoops.put(svn, serverStatR);
-				serverStat = new Thread(serverStatR);
-				serverStat.start();
-			}
-		}
+//		if(isF){
+//			if(ModMenu.socketLoops.get(svn) != null){
+//				serverStatR = ModMenu.socketLoops.get(svn);
+//				serverStat = new Thread(serverStatR);
+//				serverStat.start();
+//			} else {
+//				serverStatR = new Networking.SocketStatusLoop(svn);
+//				ModMenu.socketLoops.put(svn, serverStatR);
+//				serverStat = new Thread(serverStatR);
+//				serverStat.start();
+//			}
+//		}
 		this.renderSvnNO = renSvn;
 		if(isF) {
 			if (ModMenu.buttonEntries.get(svn) != null) testB = ModMenu.buttonEntries.get(svn);
@@ -271,18 +275,18 @@ if(netER){
 		this.serverName = svn;
 		this.moreY = moreY;
 		this.isFirst = isF;
-		if(isF){
-			if(ModMenu.socketLoops.get(svn) != null){
-				serverStatR = ModMenu.socketLoops.get(svn);
-				serverStat = new Thread(serverStatR);
-				serverStat.start();
-			} else {
-				serverStatR = new Networking.SocketStatusLoop(svn);
-				ModMenu.socketLoops.put(svn, serverStatR);
-				serverStat = new Thread(ModMenu.socketLoops.get(svn));
-				serverStat.start();
-			}
-		}
+//		if(isF){
+//			if(ModMenu.socketLoops.get(svn) != null){
+//				serverStatR = ModMenu.socketLoops.get(svn);
+//				serverStat = new Thread(serverStatR);
+//				serverStat.start();
+//			} else {
+//				serverStatR = new Networking.SocketStatusLoop(svn);
+//				ModMenu.socketLoops.put(svn, serverStatR);
+//				serverStat = new Thread(ModMenu.socketLoops.get(svn));
+//				serverStat.start();
+//			}
+//		}
 		this.renderSvnNO = renSvn;
 		if(isF) {
 			if (ModMenu.buttonEntries.get(svn) != null) testB = ModMenu.buttonEntries.get(svn);
@@ -315,7 +319,6 @@ if(netER){
 //		}
 		if(useSMod) {
 			int iconSize = ModMenuConfig.COMPACT_LIST.getValue() ? COMPACT_ICON_SIZE : FULL_ICON_SIZE;
-			RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
 			if(isFirst){
 				Text svName = Text.literal(serverName);
 				StringVisitable trimmedName = svName;
@@ -335,24 +338,24 @@ if(netER){
 				testB.ButtonY = wa-20;
 				reloadB.ButtonY = wa - 20;
 				hideB.ButtonY = wa-20;
-				DrawContext.drawText(font, Language.getInstance().reorder(trimmedName), x - 5, wa -11, 0xFFFFFF, false);
+				DrawContext.drawText(font, Language.getInstance().reorder(trimmedName), x - 5, wa -11, 0xFFFFFFFF, false);
 				if(!renderSvnNO) {
 					testB.render(DrawContext, mouseX, mouseY);
 				}
 				reloadB.render(DrawContext, mouseX, mouseY);
 				hideB.render(DrawContext, mouseX, mouseY);
 				//DrawContext.drawTexture(DOWNLOAD_ICON, ButtonX, ButtonY, 0, 0,ButtonSX, ButtonSY, 32, 64);
-				if(serverStatR != null) {
-					if (serverStatR.status == 0) {
+
+
+//				if(serverStatR != null) {
+					if (ModMenu.MainNetwork.isSocketValid(serverName)) {
 						DrawContext.fill(font.getWidth(trimmedName) + 8, wa - 11, font.getWidth(trimmedName) + 6, wa - 12, 0xFF00FF00);
 					}
-						else if (serverStatR.status == 1) {
+					else  {
 						DrawContext.fill(font.getWidth(trimmedName) + 8, wa - 11, font.getWidth(trimmedName) + 6, wa - 12, 0xFF808080);
-					}else {
-						DrawContext.fill(font.getWidth(trimmedName) + 8, wa - 11, font.getWidth(trimmedName) + 6, wa - 12, 0xFFFF0000);
-						}
+					}
 
-				}
+//				}
 
 				y = y + 4;
 				if(moreY){
@@ -371,9 +374,19 @@ if(netER){
 			if ("java".equals(modId)) { // maybe modmenu settings
 				DrawingUtil.drawRandomVersionBackgroundS(smod, DrawContext, x, y, iconSize, iconSize);
 			}
-			RenderSystem.enableBlend();
-			DrawContext.drawTexture(this.getIconTexture(), x, y, 0.0F, 0.0F, iconSize, iconSize, iconSize, iconSize);
-			RenderSystem.disableBlend();
+			DrawContext.drawTexture(
+				RenderPipelines.GUI_TEXTURED,
+				this.getIconTexture(),
+				x,
+				y,
+				0.0F,
+				0.0F,
+				iconSize,
+				iconSize,
+				iconSize,
+				iconSize,
+				ColorHelper.getWhite(1.0F)
+			);
 			Text name = Text.literal(smod.meta.name);
 			StringVisitable trimmedName = name;
 			int maxNameWidth = rowWidth - iconSize - 3;
@@ -382,7 +395,7 @@ if(netER){
 				StringVisitable ellipsis = StringVisitable.plain("...");
 				trimmedName = StringVisitable.concat(font.trimToWidth(name, maxNameWidth - font.getWidth(ellipsis)), ellipsis);
 			}
-			DrawContext.drawText(font, Language.getInstance().reorder(trimmedName), x + iconSize + 3, y + 1, 0xFFFFFF, false);
+			DrawContext.drawText(font, Language.getInstance().reorder(trimmedName), x + iconSize + 3, y + 1, 0xFFFFFFFF, false);
 //			if(enableDownloads){
 //				DrawContext.drawTexture(DOWNLOAD_ICON, x + iconSize - 12, y+1, 0.0F, 0.0F, DLICON_SIZE, DLICON_SIZE, 16, 16);
 //			}
@@ -438,10 +451,19 @@ if(netER){
 			if ("java".equals(modId)) {
 				DrawingUtil.drawRandomVersionBackground(mod, DrawContext, x, y, iconSize, iconSize);
 			}
-			RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
-			RenderSystem.enableBlend();
-			DrawContext.drawTexture(this.getIconTexture(), x, y, 0.0F, 0.0F, iconSize, iconSize, iconSize, iconSize);
-			RenderSystem.disableBlend();
+			DrawContext.drawTexture(
+				RenderPipelines.GUI_TEXTURED,
+				this.getIconTexture(),
+				x,
+				y,
+				0.0F,
+				0.0F,
+				iconSize,
+				iconSize,
+				iconSize,
+				iconSize,
+				ColorHelper.getWhite(1.0F)
+			);
 			Text name = Text.literal(mod.getTranslatedName());
 			StringVisitable trimmedName = name;
 			int maxNameWidth = rowWidth - iconSize - 3;
@@ -450,12 +472,12 @@ if(netER){
 				StringVisitable ellipsis = StringVisitable.plain("...");
 				trimmedName = StringVisitable.concat(font.trimToWidth(name, maxNameWidth - font.getWidth(ellipsis)), ellipsis);
 			}
-			DrawContext.drawText(font, Language.getInstance().reorder(trimmedName), x + iconSize + 3, y + 1, 0xFFFFFF, false);
+			DrawContext.drawText(font, Language.getInstance().reorder(trimmedName), x + iconSize + 3, y + 1, 0xFFFFFFFF, false);
 			var updateBadgeXOffset = 0;
-			if (ModMenuConfig.UPDATE_CHECKER.getValue() && !ModMenuConfig.DISABLE_UPDATE_CHECKER.getValue().contains(modId) && (mod.getModrinthData() != null || mod.getChildHasUpdate())) {
-				UpdateAvailableBadge.renderBadge(DrawContext, x + iconSize + 3 + font.getWidth(name) + 2, y);
-				updateBadgeXOffset = 11;
-			}
+//			if (ModMenuConfig.UPDATE_CHECKER.getValue() && !ModMenuConfig.DISABLE_UPDATE_CHECKER.getValue().contains(modId) && (mod.getModrinthData() != null || mod.getChildHasUpdate())) {
+//				UpdateAvailableBadge.renderBadge(DrawContext, x + iconSize + 3 + font.getWidth(name) + 2, y);
+//				updateBadgeXOffset = 11;
+//			}
 			if (!ModMenuConfig.HIDE_BADGES.getValue()) {
 				new ModBadgeRenderer(x + iconSize + 3 + font.getWidth(name) + 2 + updateBadgeXOffset, y, x + rowWidth, mod, list.getParent()).draw(DrawContext, mouseX, mouseY);
 			}
@@ -473,10 +495,10 @@ if(netER){
 					boolean hoveringIcon = mouseX - x < iconSize;
 					int v = hoveringIcon ? iconSize : 0;
 					if (this.list.getParent().modScreenErrors.containsKey(modId)) {
-						DrawContext.drawTexture(ERROR_ICON, x, y, 96.0F, (float) v, iconSize, iconSize, textureSize, textureSize);
+						DrawContext.drawTexture(RenderPipelines.GUI_TEXTURED, ERROR_ICON, x, y, 96.0F, (float) v, iconSize, iconSize, textureSize, textureSize);
 						if (hoveringIcon) {
 							Throwable e = this.list.getParent().modScreenErrors.get(modId);
-							this.list.getParent().setTooltip(this.client.textRenderer.wrapLines(Text.translatable("modmenu.configure.error", modId, modId).copy().append("\n\n").append(e.toString()).formatted(Formatting.RED), 175));
+							DrawContext.drawTooltip(this.client.textRenderer.wrapLines(Text.translatable("modmenu.configure.error", modId, modId).copy().append("\n\n").append(e.toString()).formatted(Formatting.RED), 175), mouseX, mouseY);
 						}
 					} else {
 						//DrawContext.drawTexture(MOD_CONFIGURATION_ICON, x, y, 0.0F, (float) v, iconSize, iconSize, textureSize, textureSize);
@@ -497,7 +519,7 @@ if(netER){
 
 		for (SMod item : chunk) {
 			MainNetwork.requestNDownload(this.serverName, item.getId());
-			if(Objects.equals(MainNetwork.networkErrors.get(this.serverName), "ERR")){
+			if(Objects.equals(MainNetwork.networkErrors.get(serverName + smod.id), "ERR")){
 				netER = true;
 			} else {
 				netER = false;
@@ -607,7 +629,7 @@ if(netER){
 				}
 
 			} else {
-				this.iconLocation = new Identifier(ModMenu.MOD_ID, mod.getId() + "_icon");
+				this.iconLocation = Identifier.of(ModMenu.MOD_ID, mod.getId() + "_icon");
 				NativeImageBackedTexture icon = mod.getIcon(list.getFabricIconHandler(), 64 * this.client.options.getGuiScale().getValue());
 				if (icon != null) {
 					this.client.getTextureManager().registerTexture(this.iconLocation, icon);

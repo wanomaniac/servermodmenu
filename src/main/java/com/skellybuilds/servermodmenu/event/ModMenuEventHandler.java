@@ -3,7 +3,7 @@ package com.skellybuilds.servermodmenu.event;
 import com.skellybuilds.servermodmenu.api.ModMenuApi;
 import com.skellybuilds.servermodmenu.config.ModMenuConfig;
 import com.skellybuilds.servermodmenu.gui.widget.ModMenuButtonWidget;
-import com.skellybuilds.servermodmenu.gui.widget.UpdateCheckerTexturedButtonWidget;
+//import com.skellybuilds.servermodmenu.gui.widget.UpdateCheckerTexturedButtonWidget;
 import com.skellybuilds.servermodmenu.ModMenu;
 import com.skellybuilds.servermodmenu.gui.ModsScreen;
 import com.skellybuilds.servermodmenu.util.ModrinthUtil;
@@ -27,7 +27,7 @@ import net.minecraft.util.Identifier;
 import java.util.List;
 
 public class ModMenuEventHandler {
-	public static final Identifier FABRIC_ICON_BUTTON_LOCATION = new Identifier(ModMenu.MOD_ID, "textures/gui/mods_button.png");
+	public static final Identifier FABRIC_ICON_BUTTON_LOCATION = Identifier.of(ModMenu.MOD_ID, "textures/gui/mods_button.png");
 	private static KeyBinding MENU_KEY_BIND;
 
 	public static void register() {
@@ -86,9 +86,9 @@ public class ModMenuEventHandler {
 					buttons.add(modsButtonIndex, new ModMenuButtonWidget(screen.width / 2 - 100, buttonsY + spacing, 200, 20, ModMenuApi.createModsButtonText(), screen));
 				} else if (ModMenuConfig.MODS_BUTTON_STYLE.getValue() == ModMenuConfig.TitleMenuButtonStyle.SHRINK) {
 					buttons.add(modsButtonIndex, new ModMenuButtonWidget(screen.width / 2 + 2, buttonsY, 98, 20, ModMenuApi.createModsButtonText(), screen));
-				} else if (ModMenuConfig.MODS_BUTTON_STYLE.getValue() == ModMenuConfig.TitleMenuButtonStyle.ICON) {
-					buttons.add(modsButtonIndex, new UpdateCheckerTexturedButtonWidget(screen.width / 2 + 104, buttonsY, 20, 20, 0, 0, 20, FABRIC_ICON_BUTTON_LOCATION, 32, 64, button -> MinecraftClient.getInstance().setScreen(new ModsScreen(screen)), ModMenuApi.createModsButtonText()));
-				}
+				} //else if (ModMenuConfig.MODS_BUTTON_STYLE.getValue() == ModMenuConfig.TitleMenuButtonStyle.ICON) {
+//					buttons.add(modsButtonIndex, new UpdateCheckerTexturedButtonWidget(screen.width / 2 + 104, buttonsY, 20, 20, 0, 0, 20, FABRIC_ICON_BUTTON_LOCATION, 32, 64, button -> MinecraftClient.getInstance().setScreen(new ModsScreen(screen)), ModMenuApi.createModsButtonText()));
+//				}
 			}
 		}
 		ModrinthUtil.triggerV2DeprecatedToast();
@@ -112,7 +112,7 @@ public class ModMenuEventHandler {
 	public static void shiftButtons(Widget widget, boolean shiftUp, int spacing) {
 		if (shiftUp) {
 			widget.setY(widget.getY() - spacing / 2);
-		} else if (!(widget instanceof ClickableWidget button && button.getMessage().equals(TitleScreen.COPYRIGHT))) {
+		} else if (!(widget instanceof ClickableWidget button && button.getMessage().equals(Text.translatable("title.credits")))) {
 			widget.setY(widget.getY() + spacing / 2);
 		}
 	}

@@ -62,7 +62,7 @@ public class ModrinthUtil {
 			String primaryLoader = ModMenu.runningQuilt ? "quilt" : "fabric";
 			List<String> loaders = ModMenu.runningQuilt ? List.of("fabric", "quilt") : List.of("fabric");
 
-			String mcVer = SharedConstants.getGameVersion().getName();
+			String mcVer = SharedConstants.getGameVersion().name();
 			String[] splitVersion = FabricLoader.getInstance().getModContainer(ModMenu.MOD_ID)
 					.get().getMetadata().getVersion().getFriendlyString().split("\\+", 1); // Strip build metadata for privacy
 			final var modMenuVersion = splitVersion.length > 1 ? splitVersion[1] : splitVersion[0];

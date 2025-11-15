@@ -17,6 +17,7 @@ import com.skellybuilds.servermodmenu.util.mod.Mod;
 import com.skellybuilds.servermodmenu.util.mod.ModBadgeRenderer;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gl.RenderPipelines;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.ConfirmLinkScreen;
 import net.minecraft.client.gui.screen.ConfirmScreen;
@@ -35,10 +36,7 @@ import net.minecraft.screen.ScreenTexts;
 import net.minecraft.sound.SoundEvents;
 import net.minecraft.text.StringVisitable;
 import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.Language;
-import net.minecraft.util.Util;
+import net.minecraft.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.io.IOException;
@@ -55,9 +53,9 @@ import static com.skellybuilds.servermodmenu.ModMenu.MainNetwork;
 
 
 public class ModsScreen extends Screen {
-	private static final Identifier FILTERS_BUTTON_LOCATION = new Identifier(ModMenu.MOD_ID, "textures/gui/filters_button.png");
-	private static final Identifier DOWNLOSD_BUTTON_LOCATION = new Identifier(ModMenu.MOD_ID, "textures/gui/download_button.png");
-	private static final Identifier RELOADS_BUTTON_LOCATION = new Identifier(ModMenu.MOD_ID, "textures/gui/reload_servers.png");
+	private static final Identifier FILTERS_BUTTON_LOCATION = Identifier.of(ModMenu.MOD_ID, "textures/gui/filters_button.png");
+	private static final Identifier DOWNLOSD_BUTTON_LOCATION = Identifier.of(ModMenu.MOD_ID, "textures/gui/download_button.png");
+	private static final Identifier RELOADS_BUTTON_LOCATION = Identifier.of(ModMenu.MOD_ID, "textures/gui/reload_servers.png");
 	private static final Text OptModT = Text.translatable("modmenu.isOpt");
 	private static final Text ReqModT = Text.translatable("modmenu.isReq");
 	private static final Text TOGGLE_FILTER_OPTIONS = Text.translatable("modmenu.toggleFilterOptions");
@@ -89,6 +87,14 @@ public class ModsScreen extends Screen {
 	private MinecraftClient client = MinecraftClient.getInstance();
 	private ServerList serverList;
 	public AtomicInteger amountofvmods = new AtomicInteger();
+	ButtonWidget websiteButton;
+	ButtonWidget issuesButton;
+	ButtonWidget downloadAllSButton;
+	ButtonWidget downloadButton;
+	ButtonWidget showHiddenServers;
+	ButtonWidget sortingButton;
+	ButtonWidget filtersButton;
+	ButtonWidget reloadSButton;
 
 	public ModsScreen(Screen previousScreen) {
 		super(Text.translatable("servermodmenu.title"));
@@ -96,29 +102,57 @@ public class ModsScreen extends Screen {
 	}
 
 	@Override
-	public boolean mouseScrolled(double mouseX, double mouseY, double amount) {
+	public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
 		if (modList.isMouseOver(mouseX, mouseY)) {
-			return this.modList.mouseScrolled(mouseX, mouseY, amount);
+			return this.modList.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
 		}
+
 		if (descriptionListWidget.isMouseOver(mouseX, mouseY)) {
-			return this.descriptionListWidget.mouseScrolled(mouseX, mouseY, amount);
+			return this.descriptionListWidget.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
 		}
+
 		return false;
 	}
 
 
+	@Override
+	public boolean mouseClicked(double mouseX, double mouseY, int button) {
+		if (button == 0 && selected == null) { // left click
+			int textWidth = textRenderer.getWidth(Text.translatable("modmenu.adddamnservers"));
+			int x = (this.width - textWidth) / 2;
+			int y = this.height / 2;
 
-	private boolean NThreadsFinished(){
-		final boolean[] isAllDone = {true};
-		MainNetwork.networkThreads.forEach((d, a) -> {
-			if(!isAllDone[0]) return;
-			if(a.getState() == Thread.State.RUNNABLE) {
-				isAllDone[0] = false;
+			boolean clicked =
+				mouseX >= x &&
+					mouseX <= x + textWidth &&
+					mouseY >= y &&
+					mouseY <= y + textRenderer.fontHeight;
+
+			if (clicked) {
+				serverList = new ServerList(client);
+				serverList.loadFile();
+				MainNetwork.shutdown();
+				ModMenu.LoadServerListConnections(serverList, MainNetwork);
+				close();
+				MinecraftClient.getInstance().setScreen(new ModsScreen(this.previousScreen));
+				return true;
 			}
-		});
+		}
 
-		return isAllDone[0];
+		return super.mouseClicked(mouseX, mouseY, button);
 	}
+
+//	private boolean NThreadsFinished(){
+//		final boolean[] isAllDone = {true};
+//		MainNetwork.networkThreads.forEach((d, a) -> {
+//			if(!isAllDone[0]) return;
+//			if(a.getState() == Thread.State.RUNNABLE) {
+//				isAllDone[0] = false;
+//			}
+//		});
+//
+//		return isAllDone[0];
+//	}
 
 	public void switchToConfirm(){
 			this.client.execute(() -> {
@@ -136,16 +170,34 @@ public class ModsScreen extends Screen {
 
 	}
 
-	@Override
-	public void tick() {
-		this.searchBox.tick();
-	}
+//	@Override
+//	public void tick() {
+//		this.searchBox.tick();
+//	}
 
 	private void backCB(ConfirmationScreen bla){
 		MinecraftClient.getInstance().setScreen(bla.prevS);
 	}
 	private void resCB(ConfirmationScreen bla){
-		LOGGER.info("Your game didn't crash, you intentionally (or by mistake, you never know) closed the game. Restart the game manually");
+		LOGGER.info("Your game didn't crash, you intentionally (or by mistake, you never know) closed the game. The game will be restarted.");
+		try {
+			// Get the current java executable
+			String javaBin = System.getProperty("java.home") + "/bin/java";
+			// Get the path of the running jar
+			String jarPath = new java.io.File(
+				MinecraftClient.class.getProtectionDomain()
+					.getCodeSource()
+					.getLocation()
+					.toURI()
+			).getPath();
+
+			// Build command: java -jar yourJar.jar
+			ProcessBuilder builder = new ProcessBuilder(javaBin, "-jar", jarPath);
+			builder.start(); // Launch new process
+		} catch (Exception e) {
+			e.printStackTrace();
+			LOGGER.error("Failed to restart the game automatically.");
+		}
 		MinecraftClient.getInstance().scheduleStop();
 	}
 
@@ -170,6 +222,17 @@ public class ModsScreen extends Screen {
 			}
 		});
 	}
+
+	private boolean isValidUrl(String url) {
+		if (url == null || url.isEmpty()) return false;
+		try {
+			new java.net.URI(url.replaceAll("\"", ""));
+			return true;
+		} catch (Exception e) {
+			return false;
+		}
+	}
+
 
 	@Override
 	protected void init() {
@@ -228,400 +291,342 @@ public class ModsScreen extends Screen {
 
 
 
-		this.modList = new ModListWidget(this.client, paneWidth, this.height, paneY, this.height - 36, ModMenuConfig.COMPACT_LIST.getValue() ? 23 : 36, this.searchBox.getText(), this.modList, this);
+		this.modList = new ModListWidget(this.client, this.paneWidth,
+			this.height - paneY - 36,
+			paneY, ModMenuConfig.COMPACT_LIST.getValue() ? 23 : 36, this.searchBox.getText(), this.modList, this);
 		if(ModMenu.MODS.isEmpty() && !ModMenu.SMODS.isEmpty()){
 			this.modList.useSMod = true;
 		}
-		this.modList.setLeftPos(0);
+		this.modList.setX(0);
 		modList.reloadFilters();
 
 		// Downloads all from each server. Yep, may take time!
-		ButtonWidget downloadAllSButton = new TexturedButtonWidget(paneWidth / 2 + searchBoxWidth / 2 - 20 / 2 + 41, 22, 20, 20, 0, 0, 20, DOWNLOSD_BUTTON_LOCATION, 32, 64, button -> {
+		downloadAllSButton =
+			LegacyTexturedButtonWidget.legacyTexturedBuilder(
+					Text.empty(), // or a tooltip text if you want
+					button -> {
 
-			final SoundManager[] tempmgr = new SoundManager[1];
-			boolean change = false;
-button.active = false;
-Thread finalT = new Thread(() -> {
-	AtomicBoolean isERRORD = new AtomicBoolean(false);
-	AtomicBoolean isSUCONCE = new AtomicBoolean(false);
-	modList.children().forEach((child) -> {
-		if(child.isFirst){
-			EntryButton mButton = ModMenu.buttonEntries.get(child.serverName);
-			mButton.active = false;
-		}
-	});
+						final SoundManager[] tempmgr = new SoundManager[1];
+						boolean change = false;
+						button.active = false;
+							Thread finalT = new Thread(() -> {
+							AtomicBoolean isERRORD = new AtomicBoolean(false);
+							AtomicBoolean isSUCONCE = new AtomicBoolean(false);
+							modList.children().forEach((child) -> {
+								if(child.isFirst){
+									EntryButton mButton = ModMenu.buttonEntries.get(child.serverName);
+									mButton.active = false;
+								}
+							});
 
-	modList.children().forEach((child) -> {
-		if(child.isFirst) {
-			EntryButton mButton = ModMenu.buttonEntries.get(child.serverName);
-			if (!change) {
-				tempmgr[0] = mButton.SOUNDMANAGER;
-			}
-			child.downloadA(mButton);
-			boolean isDT0 = false;
-			boolean isDTFW = false;
-			while (true) {
-				if(MainNetwork.isDthreadDone(child.serverName)){
-					isDT0 = true;
-				}
-				if(isDT0 && !isDTFW){
-					try {
-						Thread.sleep(2950);
-					} catch (InterruptedException e) {
-						LOGGER.error("Interrupted: {}", e.toString());
+							modList.children().forEach((child) -> {
+								if(child.isFirst) {
+									EntryButton mButton = ModMenu.buttonEntries.get(child.serverName);
+									if (!change) {
+										tempmgr[0] = mButton.SOUNDMANAGER;
+									}
+									child.downloadA(mButton);
+									boolean isDT0 = false;
+									boolean isDTFW = false;
+									while (true) {
+										if(MainNetwork.isDthreadDone(child.serverName, child.smod.id)){
+											isDT0 = true;
+										}
+										if(isDT0 && !isDTFW){
+											try {
+												Thread.sleep(2950);
+											} catch (InterruptedException e) {
+												LOGGER.error("Interrupted: {}", e.toString());
+											}
+											if(MainNetwork.isDthreadDone(child.serverName, child.smod.id)){
+												if(Objects.equals(MainNetwork.networkErrors.get(child.serverName + child.smod.id), "ERR")){
+													button.active = true;
+													button.visible = true;
+													mButton.active = true;
+													mButton.visible = true;
+													tempmgr[0].play(PositionedSoundInstance.master(SoundEvents.ENTITY_VILLAGER_NO, 1.0F));
+													isERRORD.set(true);
+													break;
+												} else {
+													isDTFW = true;
+													isSUCONCE.set(true);
+												}
+											} else isDT0 = false;
+										} else {
+											if(!isDTFW) {
+												try {
+													Thread.sleep(750);
+												} catch (InterruptedException e) {
+													LOGGER.error("Interrupted: {}", e.toString());
+												}
+											} else {
+												break;
+											}
+										}
+									}
+									if(!isERRORD.get() && !isSUCONCE.get()) {
+										mButton.visible = false;
+									}
+								}
+							});
+
+							// if no errors & downloaded a server sucessfully
+							if(!isERRORD.get() && isSUCONCE.get()) {
+								tempmgr[0].play(PositionedSoundInstance.master(SoundEvents.UI_TOAST_CHALLENGE_COMPLETE, 1.0F));
+								button.visible = false;
+								switchToConfirm();
+							} // a server downlaoded successfully but another one failed!
+							else if(isERRORD.get() && isSUCONCE.get()) {
+								tempmgr[0].play(PositionedSoundInstance.master(SoundEvents.ENTITY_PLAYER_BIG_FALL, 1.0F));
+								//button.visible = false;
+								switchToConfirmCS("A server's mod successfully were downloaded but another one failed!!! Do you wish to close the game?");
+							} // All servers failed to download!!!
+							else if(isERRORD.get() && !isSUCONCE.get()){
+								tempmgr[0].play(PositionedSoundInstance.master(SoundEvents.ENTITY_PLAYER_DEATH, 1.0F));
+							}
+						});
+
+						finalT.start();
+
+
+
+
 					}
-					if(MainNetwork.isDthreadDone(child.serverName)){
-						if(Objects.equals(MainNetwork.networkErrors.get(child.serverName), "ERR")){
-							button.active = true;
-							button.visible = true;
-							mButton.active = true;
-							mButton.visible = true;
-							tempmgr[0].play(PositionedSoundInstance.master(SoundEvents.ENTITY_VILLAGER_NO, 1.0F));
-							isERRORD.set(true);
-							break;
-						} else {
-							isDTFW = true;
-							isSUCONCE.set(true);
-						}
-					} else isDT0 = false;
-				} else {
-					if(!isDTFW) {
-						try {
-							Thread.sleep(750);
-						} catch (InterruptedException e) {
-							LOGGER.error("Interrupted: {}", e.toString());
-						}
-					} else {
-						break;
-					}
-				}
-			}
-			if(!isERRORD.get() && !isSUCONCE.get()) {
-				mButton.visible = false;
-			}
-		}
-	});
+				)
+				.position(paneWidth / 2 + searchBoxWidth / 2 - 10 + 41, 22)
+				.size(20, 20)
+				.uv(0, 0, 20)   // (u, v, vOffset) like your old constructor
+				.texture(DOWNLOSD_BUTTON_LOCATION, 32, 64)
+				.build();
 
-	// if no errors & downloaded a server sucessfully
-	if(!isERRORD.get() && isSUCONCE.get()) {
-		tempmgr[0].play(PositionedSoundInstance.master(SoundEvents.UI_TOAST_CHALLENGE_COMPLETE, 1.0F));
-		button.visible = false;
-		switchToConfirm();
-	} // a server downlaoded successfully but another one failed!
-	else if(isERRORD.get() && isSUCONCE.get()) {
-		tempmgr[0].play(PositionedSoundInstance.master(SoundEvents.ENTITY_PLAYER_BIG_FALL, 1.0F));
-		//button.visible = false;
-		switchToConfirmCS("A server's mod successfully were downloaded but another one failed!!! Do you wish to close the game?");
-	} // All servers failed to download!!!
-	else if(isERRORD.get() && !isSUCONCE.get()){
-		tempmgr[0].play(PositionedSoundInstance.master(SoundEvents.ENTITY_PLAYER_DEATH, 1.0F));
-	}
-});
-
-finalT.start();
-
-
-
-		}){
-			@Override
-			public void render(DrawContext DrawContext, int mouseX, int mouseY, float delta) {
-			if(amountofvmods.get() == 0){
-				visible = false;
-				active = false;
-				return;
-			}
-
-				if(selected == null) {
-				visible = false;
-				active = false;
-				return;
-			}
-
-
-
-				if(ModMenu.isAllDFB){
-					visible = false;
-					active = false;
-					return;
-				}
-
-				visible = true;
-				active = true;
-
-				super.render(DrawContext, mouseX, mouseY, delta);
-		}
-
-		@Override
-		public void renderButton(DrawContext DrawContext, int mouseX, int mouseY, float delta) {
-			RenderSystem.setShader(GameRenderer::getPositionTexColorProgram);
-			RenderSystem.setShaderColor(1, 1, 1, 1f);
-			super.renderButton(DrawContext, mouseX, mouseY, delta);
-		}
-	};
 
 		downloadAllSButton.setTooltip(Tooltip.of(DOWNLOADALLSERV_T));
 
-		this.descriptionListWidget = new DescriptionListWidget(this.client, paneWidth, this.height, RIGHT_PANE_Y + 60, this.height - 36, textRenderer.fontHeight + 1, this);
-		this.descriptionListWidget.setLeftPos(rightPaneX);
+		this.descriptionListWidget = new DescriptionListWidget(
+			this.client, this.paneWidth,
+			this.height - RIGHT_PANE_Y - 96,
+			RIGHT_PANE_Y + 60,
+			textRenderer.fontHeight + 1, this);
+		this.descriptionListWidget.setX(rightPaneX);
 
-		ButtonWidget downloadButton = new TexturedButtonWidget(width - 24, RIGHT_PANE_Y, 20, 20, 0, 0, 20, DOWNLOSD_BUTTON_LOCATION, 32, 64, button -> {
-			if(selected == null) return;
+		downloadButton =
+			LegacyTexturedButtonWidget.legacyTexturedBuilder(
+					Text.empty(),
+					button -> {
+						if (selected == null) return;
 
-			if(!ModMenu.buttonEntries.get(selected.serverName).active) return;
-			if(!ModMenu.buttonEntries.get(selected.serverName).visible) return;
-			final String id = Objects.requireNonNull(selected).getSMod().getId();
-//			if(selected.renderSvnNO){
-//				button.visible = false;
-//				return;
-//			}
-			if(Networking.isModAlreadyPresent(id)){
-//				button.visible = false;
-				return;
-			} else {
-	//			button.visible = true;
-				button.active = false;
-				Thread orgw = new Thread(() -> {
-					MainNetwork.requestNDownload(selected.serverName, id);
-				});
+						if (!ModMenu.buttonEntries.get(selected.serverName).active) return;
+						if (!ModMenu.buttonEntries.get(selected.serverName).visible) return;
 
-				orgw.start();
+						final String id = selected.getSMod().getId();
 
-				AtomicBoolean isNE = new AtomicBoolean(false);
+						if (Networking.isModAlreadyPresent(id)) {
+							return;
+						}
 
-				Thread bla = new Thread(() -> {
-					while (true) {
-						if (orgw.getState() != Thread.State.RUNNABLE) {
-							if(Objects.equals(MainNetwork.networkErrors.get(selected.serverName), "ERR")){
-							button.active = true;
-							button.visible = true;
-								isNE.set(true);
-							} else {
-								ModMenu.idsDLD.add(selected.getSMod().id);
-								selected.smod.isDownloaded = true;
-								button.active = true;
-								if (!ModMenu.isAllDFB) {
-									List<Boolean> isAllt = new ArrayList<>();
-									ModMenu.buttonEntries.forEach((name, mButton) -> {
-										if (!mButton.visible)
-											isAllt.add(true);
-									});
+						button.active = false;
 
-									if (isAllt.size() == ModMenu.buttonEntries.size())
-										ModMenu.isAllDFB = true;
+						new Thread(() -> {
+							// This runs in a background thread
+							MainNetwork.requestNDownload(selected.serverName, id);
+							while(!MainNetwork.isDthreadDone(selected.serverName, id)) {
+
+							}
+							boolean networkError = "ERR".equals(MainNetwork.networkErrors.get(selected.serverName));
+
+							// Update button state on the client thread
+							MinecraftClient.getInstance().execute(() -> {
+								if (networkError) {
+									button.active = true;
+									button.visible = true;
+								} else {
+									ModMenu.idsDLD.add(selected.getSMod().id);
+									selected.smod.isDownloaded = true;
+									button.active = true;
+
+									if (!ModMenu.isAllDFB) {
+										boolean allHidden = ModMenu.buttonEntries.values().stream()
+											.allMatch(b -> !b.visible);
+										if (allHidden) ModMenu.isAllDFB = true;
+									}
+
+									// Show confirmation screen if no network error
+									if (!networkError) switchToConfirm();
 								}
-							}
-					break;
-						}
+							});
+						}).start();
+
 					}
-					return;
-				});
+				)
+				.position(width - 24, RIGHT_PANE_Y)
+				.size(20, 20)
+				.uv(0, 0, 20)
+				.texture(DOWNLOSD_BUTTON_LOCATION, 32, 64)
+				.build();
 
-				bla.start();
-
-				do {
-					if (bla.getState() != Thread.State.RUNNABLE) {
-						if(!isNE.get()) switchToConfirm();
-						break;
-					}
-				} while (true);
-
-			}
-		}) {
-			@Override
-			public void render(DrawContext DrawContext, int mouseX, int mouseY, float delta) {
-				if(selected == null) return;
-
-				if(ModMenu.isAllDFB){
-					visible = false;
-					super.render(DrawContext, mouseX, mouseY, delta);
-				}
-
-				if(!ModMenu.buttonEntries.get(selected.serverName).visible){
-					visible = false;
-					super.render(DrawContext, mouseX, mouseY, delta);
-					return;
-				}
-				// all mods downloaded if all mods are downloaded
-				if(!ModMenu.buttonEntries.get(selected.serverName).active){
-					active = false;
-					super.render(DrawContext, mouseX, mouseY, delta);
-					return;
-				}
-
-				if(selected.renderSvnNO){
-					visible = false;
-					super.render(DrawContext, mouseX, mouseY, delta);
-					return;
-				}
-				if(Networking.isModAlreadyPresent(selected.getSMod().id)){
-					visible = false;
-					super.render(DrawContext, mouseX, mouseY, delta);
-					return;
-				} else {
-
-						for (String s : ModMenu.idsDLD) {
-							if (Objects.equals(s, selected.getSMod().getId())) {
-								visible = false;
-								return;
-							}
-						}
-
-						visible = true;
-						active = true;
-
-						super.render(DrawContext, mouseX, mouseY, delta);
-						return;
-
-
-				}
-
-
-				//
-			}
-
-			@Override
-			public void renderButton(DrawContext DrawContext, int mouseX, int mouseY, float delta) {
-				RenderSystem.setShader(GameRenderer::getPositionTexColorProgram);
-				RenderSystem.setShaderColor(1, 1, 1, 1f);
-				super.renderButton(DrawContext, mouseX, mouseY, delta);
-			}
-		};
 		int urlButtonWidths = paneWidth / 2 - 2;
 		int cappedButtonWidth = Math.min(urlButtonWidths, 200);
-		ButtonWidget websiteButton = new ButtonWidget(rightPaneX + (urlButtonWidths / 2) - (cappedButtonWidth / 2), RIGHT_PANE_Y + 36, Math.min(urlButtonWidths, 200), 20,
-				Text.translatable("modmenu.website"), button -> {
-			if(selected.useSMOD()) {
-				final SMod mod = Objects.requireNonNull(selected).getSMod();
-				this.client.setScreen(new ConfirmLinkScreen((bool) -> {
-					if (bool) {
-						Util.getOperatingSystem().open(mod.meta.contact.getHomepage().replaceAll("\"", ""));
+		websiteButton =
+			ButtonWidget.builder(
+					Text.translatable("modmenu.website"),
+					button -> {
+						if(selected.useSMOD()) {
+							final SMod mod = Objects.requireNonNull(selected).getSMod();
+							this.client.setScreen(new ConfirmLinkScreen((bool) -> {
+								if (bool) {
+									Util.getOperatingSystem().open(mod.meta.contact.getHomepage().replaceAll("\"", ""));
+								}
+								this.client.setScreen(this);
+							}, mod.meta.contact.getHomepage().replaceAll("\"", ""), false));
+						} else {
+							final Mod mod = Objects.requireNonNull(selected).getMod();
+							this.client.setScreen(new ConfirmLinkScreen((bool) -> {
+								if (bool) {
+									Util.getOperatingSystem().open(mod.getWebsite());
+								}
+								this.client.setScreen(this);
+							}, mod.getWebsite(), false));
+						}
 					}
-					this.client.setScreen(this);
-				}, mod.meta.contact.getHomepage().replaceAll("\"", ""), false));
-			} else {
-				final Mod mod = Objects.requireNonNull(selected).getMod();
-				this.client.setScreen(new ConfirmLinkScreen((bool) -> {
-					if (bool) {
-						Util.getOperatingSystem().open(mod.getWebsite());
-					}
-					this.client.setScreen(this);
-				}, mod.getWebsite(), false));
-			}
-		}, Supplier::get) {
-			@Override
-			public void render(DrawContext DrawContext, int mouseX, int mouseY, float delta) {
-				visible = selected != null;
-				if(selected != null) {
-					if (selected.renderSvnNO) {
-						visible = false;
-					} else {
-						if (selected.useSMOD())
-							active = visible && selected.getSMod().meta.contact.getHomepage() != null;
-						else active = visible && selected.getMod().getWebsite() != null;
-					}
-				}
-				super.render(DrawContext, mouseX, mouseY, delta);
-			}
-		};
-		ButtonWidget issuesButton = new ButtonWidget(rightPaneX + urlButtonWidths + 4 + (urlButtonWidths / 2) - (cappedButtonWidth / 2), RIGHT_PANE_Y + 36, Math.min(urlButtonWidths, 200), 20,
-				Text.translatable("modmenu.issues"), button -> {
-			if(selected.useSMOD()){
-				if(selected.renderSvnNO){
-					return;
-				}
-				final SMod mod = Objects.requireNonNull(selected).getSMod();
-				this.client.setScreen(new ConfirmLinkScreen((bool) -> {
-					if (bool) {
-						Util.getOperatingSystem().open(mod.meta.contact.getIssues().replaceAll("\"", ""));
-					}
-					this.client.setScreen(this);
-				}, mod.meta.contact.getIssues().replaceAll("\"", ""), false));
-			} else {
-				final Mod mod = Objects.requireNonNull(selected).getMod();
-				this.client.setScreen(new ConfirmLinkScreen((bool) -> {
-					if (bool) {
-						Util.getOperatingSystem().open(mod.getIssueTracker());
-					}
-					this.client.setScreen(this);
-				}, mod.getIssueTracker(), false));
-			}
-		}, Supplier::get) {
-			@Override
-			public void render(DrawContext DrawContext, int mouseX, int mouseY, float delta) {
-				visible = selected != null;
-				if(selected != null) {
-					if (selected.renderSvnNO) {
-						visible = false;
-					} else {
-						if (selected.useSMOD()) active = visible && selected.getSMod().meta.contact.getIssues() != null;
-						else active = visible && selected.getMod().getIssueTracker() != null;
-					}
-				}
+				)
+				.position(
+					rightPaneX + (urlButtonWidths / 2) - (cappedButtonWidth / 2),
+					RIGHT_PANE_Y + 36
+				)
+				.size(Math.min(urlButtonWidths, 200), 20)
+				.build();
 
-				super.render(DrawContext, mouseX, mouseY, delta);
-			}
-		};
-		this.addSelectableChild(this.searchBox);
-		ButtonWidget filtersButton = new TexturedButtonWidget(paneWidth / 2 + searchBoxWidth / 2 - 20 / 2 + 2, 22, 20, 20, 0, 0, 20, FILTERS_BUTTON_LOCATION, 32, 64, button -> filterOptionsShown = !filterOptionsShown, TOGGLE_FILTER_OPTIONS);
-		filtersButton.setTooltip(Tooltip.of(TOGGLE_FILTER_OPTIONS));
-		ButtonWidget reloadSButton = new TexturedButtonWidget(paneWidth / 2 + searchBoxWidth / 2 - 20 / 2 + 22, 22, 20, 20, 0, 0, 20, RELOADS_BUTTON_LOCATION, 32, 64, button -> {
-			serverList = new ServerList(client);
-			serverList.loadFile();
-			MainNetwork.reloadAllServers(serverList);
-			button.active = false;
-			new Thread(() -> {
-				while(true) {
-					if(MainNetwork.isNthreadsDone()){
-						this.modList.reloadFilters();
-						button.active = true;
-						break;
+
+		 issuesButton =
+			ButtonWidget.builder(
+					Text.translatable("modmenu.issues"),
+					button -> {
+						if(selected.useSMOD()){
+							if(selected.renderSvnNO){
+								return;
+							}
+							final SMod mod = Objects.requireNonNull(selected).getSMod();
+							this.client.setScreen(new ConfirmLinkScreen((bool) -> {
+								if (bool) {
+									Util.getOperatingSystem().open(mod.meta.contact.getIssues().replaceAll("\"", ""));
+								}
+								this.client.setScreen(this);
+							}, mod.meta.contact.getIssues(), false));
+						} else {
+							final Mod mod = Objects.requireNonNull(selected).getMod();
+							this.client.setScreen(new ConfirmLinkScreen((bool) -> {
+								if (bool) {
+									Util.getOperatingSystem().open(mod.getIssueTracker());
+								}
+								this.client.setScreen(this);
+							}, mod.getIssueTracker(), false));
+						}
 					}
-				}
-				return;
-			}).start();
-			}, RELOAD_ALLSERV_T);
+				)
+				.position(
+					rightPaneX + urlButtonWidths + 4 + (urlButtonWidths / 2) - (cappedButtonWidth / 2),
+					RIGHT_PANE_Y + 36
+				)
+				.size(Math.min(urlButtonWidths, 200), 20)
+				.build();
+
+
+
+		this.addSelectableChild(this.searchBox);
+		filtersButton =
+			LegacyTexturedButtonWidget.legacyTexturedBuilder(
+					TOGGLE_FILTER_OPTIONS,
+					button -> filterOptionsShown = !filterOptionsShown
+				)
+				.position(
+					paneWidth / 2 + searchBoxWidth / 2 - 20 / 2 + 2,
+					22
+				)
+				.size(20, 20)
+				.uv(0, 0, 20)
+				.texture(FILTERS_BUTTON_LOCATION, 32, 64)
+				.build();
+
+		filtersButton.setTooltip(Tooltip.of(TOGGLE_FILTER_OPTIONS));
+
+		reloadSButton =
+			LegacyTexturedButtonWidget.legacyTexturedBuilder(
+					Text.empty(), // or your narration text if you use one
+					button -> {
+						button.active = false;
+						serverList = new ServerList(client);
+						serverList.loadFile();
+						MainNetwork.shutdown();
+						ModMenu.LoadServerListConnections(serverList, MainNetwork);
+						close();
+						MinecraftClient.getInstance().setScreen(new ModsScreen(this.previousScreen));
+						button.active = true;
+//						new Thread(() -> {
+//							while(true) {
+//								if(MainNetwork.isNthreadsDone()){
+//									this.modList.reloadFilters();
+//									button.active = true;
+//									break;
+//								}
+//							}
+//							return;
+//						}).start();
+					}
+				)
+				.position(
+					paneWidth / 2 + searchBoxWidth / 2 - 20 / 2 + 22,
+					22
+				)
+				.size(20, 20)
+				.uv(0, 0, 20)
+				.texture(RELOADS_BUTTON_LOCATION, 32, 64)
+				.build();
+
+
 		reloadSButton.setTooltip(Tooltip.of(RELOAD_ALLSERV_T));
-//		if (!ModMenuConfig.CONFIG_MODE.getValue()) {
-//
-//
-//		}
 		this.addDrawableChild(filtersButton);
 		this.addDrawableChild(reloadSButton);
 		Text showLibrariesText = ModMenuConfig.SHOW_LIBRARIES.getButtonText();
-		Text sortingText = ModMenuConfig.SORTING.getButtonText();
+		Text sortingText = ModMenuConfig.SSORTING.getButtonText();
 		int showLibrariesWidth = textRenderer.getWidth(showLibrariesText) + 4;
 		int sortingWidth = textRenderer.getWidth(sortingText);
 		Text showHBT = ModMenuConfig.SHOWHIDDENSERVERS.getButtonText();
 		filtersWidth = showLibrariesWidth + sortingWidth + 2;
 		searchRowWidth = searchBoxX + searchBoxWidth + 22;
 		updateFiltersX();
-		this.addDrawableChild(new ButtonWidget(21, 45, 50, 20, sortingText, button -> {
-			ModMenuConfig.SSORTING.cycleValue();
-			ModMenuConfigManager.save();
-			modList.reloadFilters();
-		}, Supplier::get) {
-			@Override
-			public void render(DrawContext DrawContext, int mouseX, int mouseY, float delta) {
-				DrawContext.getMatrices().translate(0, 0, 1);
-				visible = filterOptionsShown;
-				this.setMessage(ModMenuConfig.SSORTING.getButtonText());
-				super.render(DrawContext, mouseX, mouseY, delta);
-			}
-		});
-		this.addDrawableChild(new ButtonWidget(77, 45, textRenderer.getWidth(showHBT)+6, 20, showHBT, button -> {
-			ModMenuConfig.SHOWHIDDENSERVERS.toggleValue();
-			ModMenuConfigManager.save();
-			calcServersSize();
-			modList.reloadFilters();
-		}, Supplier::get) {
-			@Override
-			public void render(DrawContext DrawContext, int mouseX, int mouseY, float delta) {
-				DrawContext.getMatrices().translate(0, 0, 1);
-				visible = filterOptionsShown;
-				this.setMessage(ModMenuConfig.SHOWHIDDENSERVERS.getButtonText());
-				super.render(DrawContext, mouseX, mouseY, delta);
-			}
-		});
+
+		sortingButton = ButtonWidget.builder(
+				sortingText,
+				btn -> {
+					ModMenuConfig.SSORTING.cycleValue();
+					ModMenuConfigManager.save();
+					modList.reloadFilters();
+				}
+			)
+			.position(21, 45)
+			.size(50, 20)
+			.build();
+
+		this.addDrawableChild(
+			sortingButton
+		);
+		showHiddenServers = ButtonWidget.builder(
+				showHBT,
+				btn -> {
+					ModMenuConfig.SHOWHIDDENSERVERS.toggleValue();
+					ModMenuConfigManager.save();
+					calcServersSize();
+					modList.reloadFilters();
+				}
+			)
+			.position(77, 45)
+			.size(textRenderer.getWidth(showHBT) + 6, 20)
+			.build();
+
+		this.addDrawableChild(
+			showHiddenServers
+		);
+
 		this.addSelectableChild(this.modList);
 		this.addDrawableChild(downloadAllSButton);
 		if (!ModMenuConfig.HIDE_CONFIG_BUTTONS.getValue()) {
@@ -654,16 +659,27 @@ finalT.start();
 	@Override
 	public void render(DrawContext DrawContext, int mouseX, int mouseY, float delta) {
 		//if(selected == null && ModsA.length > 0)updateSelectedEntry(new ModListEntry(ModsA[0], modList));
+		super.render(DrawContext, mouseX, mouseY, delta);
 
-		this.renderBackgroundTexture(DrawContext);
+		if(selected == null){
+
+		}
+
 		ModListEntry selectedEntry = selected;
 		if (selectedEntry != null && !selectedEntry.renderSvnNO) {
 			this.descriptionListWidget.render(DrawContext, mouseX, mouseY, delta);
 		}
+		if(selectedEntry != null && selectedEntry.useSMOD()) {
+			issuesButton.active = isValidUrl(selectedEntry.smod.meta.contact.getIssues());
+			websiteButton.active = isValidUrl(selectedEntry.smod.meta.contact.getHomepage());
+			downloadButton.active = !Networking.isModAlreadyPresent(selectedEntry.smod.id);
+
+
 		this.modList.render(DrawContext, mouseX, mouseY, delta);
 		this.searchBox.render(DrawContext, mouseX, mouseY, delta);
-		RenderSystem.disableBlend();
-		DrawContext.drawCenteredTextWithShadow(this.textRenderer, this.title, this.modList.getWidth() / 2, 8, 16777215);
+
+//		RenderSystem.disableBlend();
+		DrawContext.drawCenteredTextWithShadow(this.textRenderer, this.title, this.modList.getWidth() / 2, 8, 0xFFFFFFFF);
 //		if (!ModMenuConfig.DISABLE_DRAG_AND_DROP.getValue()) {
 //			DrawContext.drawCenteredTextWithShadow(this.textRenderer, Text.translatable("modmenu.dropInfo.line1").formatted(Formatting.GRAY), this.width - this.modList.getWidth() / 2, RIGHT_PANE_Y / 2 - client.textRenderer.fontHeight - 1, 16777215);
 //			DrawContext.drawCenteredTextWithShadow(this.textRenderer, Text.translatable("modmenu.dropInfo.line2").formatted(Formatting.GRAY), this.width - this.modList.getWidth() / 2, RIGHT_PANE_Y / 2 + 1, 16777215);
@@ -676,13 +692,13 @@ finalT.start();
 			if (!ModMenuConfig.CONFIG_MODE.getValue() && updateFiltersX()) {
 				if (filterOptionsShown) {
 					if (!ModMenuConfig.SHOW_LIBRARIES.getValue() || textRenderer.getWidth(fullModCount) <= filtersX - 5) {
-						DrawContext.drawText(textRenderer, fullModCount.asOrderedText(), searchBoxX, 52, 0xFFFFFF, false);
+						DrawContext.drawText(textRenderer, fullModCount.asOrderedText(), searchBoxX, 52, 0xFFFFFFFF, false);
 					} else {
 						if (selected == null) {
-							DrawContext.drawText(textRenderer, Text.translatable("modmenu.adddamnservers"), searchBoxX, 46, 0xFF0000, true);
+							DrawContext.drawText(textRenderer, Text.translatable("modmenu.adddamnservers"), searchBoxX, 46, 0xFFFFFFFF, true);
 						} else {
-							DrawContext.drawText(textRenderer, Text.translatable("servermodmenu.showingMods.n", amountofvmods).asOrderedText(), searchBoxX, 46, 0xFFFFFF, false);
-							DrawContext.drawText(textRenderer, computeLibraryCountText().asOrderedText(), searchBoxX, 57, 0xFFFFFF, false);
+							DrawContext.drawText(textRenderer, Text.translatable("servermodmenu.showingMods.n", amountofvmods).asOrderedText(), searchBoxX, 46, 0xFFFFFFFF, false);
+							DrawContext.drawText(textRenderer, computeLibraryCountText().asOrderedText(), searchBoxX, 57, 0xFFFFFFFF, false);
 						}
 					}
 				} else {
@@ -692,8 +708,8 @@ finalT.start();
 						if (selected == null) {
 							DrawContext.drawText(textRenderer, Text.translatable("modmenu.adddamnservers"), searchBoxX, 46, 0xFF0000, true);
 						} else {
-							DrawContext.drawText(textRenderer, Text.translatable("servermodmenu.showingMods.n", amountofvmods).asOrderedText(), searchBoxX, 46, 0xFFFFFF, false);
-							DrawContext.drawText(textRenderer, Text.translatable("servermodmenu.showingMods.n", amountofvmods).asOrderedText(), searchBoxX, 57, 0xFFFFFF, false);
+							DrawContext.drawText(textRenderer, Text.translatable("servermodmenu.showingMods.n", amountofvmods).asOrderedText(), searchBoxX, 46, 0xFFFFFFFF, false);
+							DrawContext.drawText(textRenderer, Text.translatable("servermodmenu.showingMods.n", amountofvmods).asOrderedText(), searchBoxX, 57, 0xFFFFFFFF, false);
 						}
 					}
 				}
@@ -707,10 +723,7 @@ finalT.start();
 					if ("java".equals(smod.getId())) {
 						DrawingUtil.drawRandomVersionBackgroundS(smod, DrawContext, x, RIGHT_PANE_Y, 32, 32);
 					}
-					RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
-					RenderSystem.enableBlend();
-					DrawContext.drawTexture(this.selected.getIconTexture(), x, RIGHT_PANE_Y, 0.0F, 0.0F, 32, 32, 32, 32);
-					RenderSystem.disableBlend();
+					DrawContext.drawTexture(RenderPipelines.GUI_TEXTURED, this.selected.getIconTexture(), x, RIGHT_PANE_Y, 0.0F, 0.0F, 32, 32, 32, 32, 0xFFFFFFFF);
 					int lineSpacing = textRenderer.fontHeight + 1;
 					int imageOffset = 36;
 					Text name = Text.literal(smod.meta.name);
@@ -720,9 +733,9 @@ finalT.start();
 						StringVisitable ellipsis = StringVisitable.plain("...");
 						trimmedName = StringVisitable.concat(textRenderer.trimToWidth(name, maxNameWidth - textRenderer.getWidth(ellipsis)), ellipsis);
 					}
-					DrawContext.drawText(textRenderer, Language.getInstance().reorder(trimmedName), x + imageOffset, RIGHT_PANE_Y + 1, 0xFFFFFF, false);
+					DrawContext.drawText(textRenderer, Language.getInstance().reorder(trimmedName), x + imageOffset, RIGHT_PANE_Y + 1, Colors.WHITE, false);
 					if (mouseX > x + imageOffset && mouseY > RIGHT_PANE_Y + 1 && mouseY < RIGHT_PANE_Y + 1 + textRenderer.fontHeight && mouseX < x + imageOffset + textRenderer.getWidth(trimmedName)) {
-						this.setTooltip(Text.translatable("modmenu.modIdToolTip", smod.getId()));
+						DrawContext.drawTooltip(Text.translatable("modmenu.modIdToolTip", smod.getId()), mouseX, mouseY);
 					}
 					if (init || modBadgeRenderer == null || modBadgeRenderer.getSMod() != smod) {
 						modBadgeRenderer = new ModBadgeRenderer(x + imageOffset + this.client.textRenderer.getWidth(trimmedName) + 2, RIGHT_PANE_Y, width - 28, selectedEntry.smod, this);
@@ -732,11 +745,11 @@ finalT.start();
 						if (!selected.useSMOD()) modBadgeRenderer.draw(DrawContext, mouseX, mouseY);
 					}
 
-					DrawContext.drawText(textRenderer, smod.getVersion(), x + imageOffset, RIGHT_PANE_Y + 2 + lineSpacing, 0x808080, false);
+					DrawContext.drawText(textRenderer, smod.getVersion(), x + imageOffset, RIGHT_PANE_Y + 2 + lineSpacing, 0xFFAAAAAA, false);
 					if(smod.isOptional){
-						DrawContext.drawText(textRenderer, OptModT, x + imageOffset, RIGHT_PANE_Y + 10 + lineSpacing, 0x808080, false);
+						DrawContext.drawText(textRenderer, OptModT, x + imageOffset, RIGHT_PANE_Y + 10 + lineSpacing, 0xFFAAAAAA, false);
 					} else {
-						DrawContext.drawText(textRenderer, ReqModT, x + imageOffset, RIGHT_PANE_Y + 10 + lineSpacing, 0x808080, false);
+						DrawContext.drawText(textRenderer, ReqModT, x + imageOffset, RIGHT_PANE_Y + 10 + lineSpacing, 0xFFAAAAAA, false);
 					}
 
 
@@ -749,7 +762,7 @@ finalT.start();
 						} else {
 							authors = names.get(0);
 						}
-						DrawingUtil.drawWrappedString(DrawContext, I18n.translate("modmenu.authorPrefix", authors), x + imageOffset, RIGHT_PANE_Y + 2 + lineSpacing * 2, paneWidth - imageOffset - 4, 1, 0x808080);
+						DrawingUtil.drawWrappedString(DrawContext, I18n.translate("modmenu.authorPrefix", authors), x + imageOffset, RIGHT_PANE_Y + 2 + lineSpacing * 2, paneWidth - imageOffset - 4, 1, 0xFFAAAAAA);
 					}
 				}
 			} else {
@@ -758,10 +771,7 @@ finalT.start();
 				if ("java".equals(mod.getId())) {
 					DrawingUtil.drawRandomVersionBackground(mod, DrawContext, x, RIGHT_PANE_Y, 32, 32);
 				}
-				RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
-				RenderSystem.enableBlend();
-				DrawContext.drawTexture(this.selected.getIconTexture(), x, RIGHT_PANE_Y, 0.0F, 0.0F, 32, 32, 32, 32);
-				RenderSystem.disableBlend();
+				DrawContext.drawTexture(RenderPipelines.GUI_TEXTURED, this.selected.getIconTexture(), x, RIGHT_PANE_Y, 0.0F, 0.0F, 32, 32, 32, 32, 0xFFFFFFFF);
 				int lineSpacing = textRenderer.fontHeight + 1;
 				int imageOffset = 36;
 				Text name = Text.literal(mod.getTranslatedName());
@@ -771,9 +781,9 @@ finalT.start();
 					StringVisitable ellipsis = StringVisitable.plain("...");
 					trimmedName = StringVisitable.concat(textRenderer.trimToWidth(name, maxNameWidth - textRenderer.getWidth(ellipsis)), ellipsis);
 				}
-				DrawContext.drawText(textRenderer, Language.getInstance().reorder(trimmedName), x + imageOffset, RIGHT_PANE_Y + 1, 0xFFFFFF, false);
+				DrawContext.drawText(textRenderer, Language.getInstance().reorder(trimmedName), x + imageOffset, RIGHT_PANE_Y + 1, 0xFFFFFFFF, false);
 				if (mouseX > x + imageOffset && mouseY > RIGHT_PANE_Y + 1 && mouseY < RIGHT_PANE_Y + 1 + textRenderer.fontHeight && mouseX < x + imageOffset + textRenderer.getWidth(trimmedName)) {
-					this.setTooltip(Text.translatable("modmenu.modIdToolTip", mod.getId()));
+					DrawContext.drawTooltip(Text.translatable("modmenu.modIdToolTip", mod.getId()), mouseX, mouseY);
 				}
 				if (init || modBadgeRenderer == null || modBadgeRenderer.getMod() != mod) {
 					modBadgeRenderer = new ModBadgeRenderer(x + imageOffset + this.client.textRenderer.getWidth(trimmedName) + 2, RIGHT_PANE_Y, width - 28, selectedEntry.mod, this);
@@ -783,7 +793,7 @@ finalT.start();
 					modBadgeRenderer.draw(DrawContext, mouseX, mouseY);
 				}
 				if (mod.isReal()) {
-					DrawContext.drawText(textRenderer, mod.getPrefixedVersion(), x + imageOffset, RIGHT_PANE_Y + 2 + lineSpacing, 0x808080, false);
+					DrawContext.drawText(textRenderer, mod.getPrefixedVersion(), x + imageOffset, RIGHT_PANE_Y + 2 + lineSpacing, 0xFFAAAAAA, false);
 				}
 				String authors;
 				List<String> names = mod.getAuthors();
@@ -794,12 +804,37 @@ finalT.start();
 					} else {
 						authors = names.get(0);
 					}
-					DrawingUtil.drawWrappedString(DrawContext, I18n.translate("modmenu.authorPrefix", authors), x + imageOffset, RIGHT_PANE_Y + 2 + lineSpacing * 2, paneWidth - imageOffset - 4, 1, 0x808080);
+					DrawingUtil.drawWrappedString(DrawContext, I18n.translate("modmenu.authorPrefix", authors), x + imageOffset, RIGHT_PANE_Y + 2 + lineSpacing * 2, paneWidth - imageOffset - 4, 1, 0xFFAAAAAA);
 				}
 			}
-			super.render(DrawContext, mouseX, mouseY, delta);
+		}
+
+//			super.render(DrawContext, mouseX, mouseY, delta);
 		} else {
-			super.render(DrawContext, mouseX, mouseY, delta);
+			showHiddenServers.visible = false;
+			sortingButton.visible = false;
+			websiteButton.visible = false;
+			issuesButton.visible = false;
+			filtersButton.visible = false;
+			reloadSButton.visible = false;
+			downloadAllSButton.visible = false;
+			downloadButton.visible = false;
+
+			Text txt = Text.translatable("modmenu.adddamnservers");
+			int textWidth = textRenderer.getWidth(txt);
+			int x = (this.width - textWidth) / 2;
+			int y = this.height / 2;
+
+			DrawContext.drawText(textRenderer, txt, x, y, 0xFFFF0000, true);
+			boolean hovering =
+				mouseX >= x &&
+					mouseX <= x + textWidth &&
+					mouseY >= y &&
+					mouseY <= y + textRenderer.fontHeight;
+			if (hovering) {
+				DrawContext.drawTooltip(Text.translatable("modmenu.adddamnservers.tooltip"), mouseX, mouseY);
+			}
+
 		}
 	}
 
@@ -856,6 +891,7 @@ finalT.start();
 		if (entry != null) {
 			this.selected = entry;
 		}
+
 	}
 
 	public double getScrollPercent() {
@@ -878,47 +914,6 @@ finalT.start();
 			filtersX = searchRowWidth - filtersWidth + 1;
 			return true;
 		}
-	}
-
-	@Override
-	public void filesDragged(List<Path> paths) {
-		Path modsDirectory = FabricLoader.getInstance().getGameDir().resolve("mods");
-
-		// Filter out none mods
-		List<Path> mods = paths.stream()
-				.filter(ModsScreen::isFabricMod)
-				.collect(Collectors.toList());
-
-		if (mods.isEmpty()) {
-			return;
-		}
-
-		String modList = mods.stream()
-				.map(Path::getFileName)
-				.map(Path::toString)
-				.collect(Collectors.joining(", "));
-
-		this.client.setScreen(new ConfirmScreen((value) -> {
-			if (value) {
-				boolean allSuccessful = true;
-
-				for (Path path : mods) {
-					try {
-						Files.copy(path, modsDirectory.resolve(path.getFileName()));
-					} catch (IOException e) {
-						LOGGER.warn("Failed to copy mod from {} to {}", path, modsDirectory.resolve(path.getFileName()));
-						SystemToast.addPackCopyFailure(client, path.toString());
-						allSuccessful = false;
-						break;
-					}
-				}
-
-				if (allSuccessful) {
-					SystemToast.add(client.getToastManager(), SystemToast.Type.TUTORIAL_HINT, Text.translatable("modmenu.dropSuccessful.line1"), Text.translatable("modmenu.dropSuccessful.line2"));
-				}
-			}
-			this.client.setScreen(this);
-		}, Text.translatable("modmenu.dropConfirm"), Text.literal(modList)));
 	}
 
 	private static boolean isFabricMod(Path mod) {

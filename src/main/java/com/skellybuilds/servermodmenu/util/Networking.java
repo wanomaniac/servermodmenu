@@ -1,318 +1,497 @@
 package com.skellybuilds.servermodmenu.util;
-import java.io.*;
-import java.net.*;
-import java.nio.file.Path;
-import java.util.*;
 
-import com.google.common.annotations.VisibleForTesting;
-import com.google.common.net.HostAndPort;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.mojang.logging.LogUtils;
 import com.skellybuilds.servermodmenu.ModMenu;
-import com.skellybuilds.servermodmenu.db.ModAdapter;
-import com.skellybuilds.servermodmenu.db.SMod;
 import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.api.ModContainer;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.*;
-import net.minecraft.client.option.ServerList;
+import net.minecraft.client.network.Address;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.util.jar.JarFile;
-import java.util.zip.ZipEntry;
-
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.net.HostAndPort;
 
 import javax.naming.directory.Attribute;
 import javax.naming.directory.Attributes;
 import javax.naming.directory.InitialDirContext;
+import java.io.*;
+import java.net.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BiConsumer;
+import java.util.jar.JarFile;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipException;
+import java.util.zip.ZipFile;
 
-import static com.skellybuilds.servermodmenu.ModMenu.MainNetwork;
-
+// Rewritten to be less terrible with threading.
 public class Networking {
 	public static final Logger LOGGER = LoggerFactory.getLogger("Server Mod Menu");
-	private final Map<String, Socket> sockets = new HashMap<>(); // Ip address, Socket
-	private final Map<String, Integer> ports = new HashMap<>();
-	public Map<String, Thread> networkThreads = new HashMap<>();
+
+	private final ConcurrentMap<String, ServerConnection> connections = new ConcurrentHashMap<>();
 	public Map<String, Thread> downloadThreads = new HashMap<>();
 	public Map<String, String> networkErrors = new HashMap<>();
-	private boolean logSER = true;
+	// Global executor for short tasks
+	private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
 
-	public void connect(String ipaddress, int port){
+	// Default request timeout
+	private static final long DEFAULT_REQUEST_TIMEOUT_MS = 5000;
+
+	public Networking() {
+		// nothing
+	}
+
+	/**
+	 * Connect (or reuse) a persistent connection to ip:port.
+	 */
+	public void connect(String ip, int port) {
+		String key = normalizeIp(ip);
+		ServerConnection conn = connections.get(key);
+		if (conn != null && conn.isHealthy()) {
+			LOGGER.info("Already connected to {}", key);
+			return;
+		}
+
+		// Try to create a new connection
 		try {
-			ports.put(ipaddress, port); // may be useful for debugging
-			sockets.put(ipaddress, new Socket(ipaddress, port));
-			logSER = true;
-			networkErrors.put(ipaddress, "OK");
-		//	LOGGER.info("Connected to socket!");
-		} catch (Exception e) {
-			if(!Objects.equals(networkErrors.get(ipaddress), "ERR")){
-				LOGGER.error("Could not connect to the socket. Server may be down or SCMC is dead");
-				networkErrors.put(ipaddress, "ERR");
+			Socket socket = new Socket();
+			socket.setTcpNoDelay(true);
+			socket.connect(new InetSocketAddress(key, port), 3000);
+
+			ServerConnection sc = new ServerConnection(key, port, socket);
+			ServerConnection prev = connections.put(key, sc);
+			if (prev != null) {
+				prev.close();
 			}
+
+			sc.start();
+			LOGGER.info("Connected to {}:{}", key, port);
+		} catch (IOException e) {
+			LOGGER.error("Could not connect to {}:{} - {}", key, port, e.getMessage());
 		}
 	}
 
-	public boolean isSocketValid(String ip){
-		if(sockets.get(ip) == null) return false;
-		if(sockets.get(ip).isClosed()){
-			sockets.remove(ip);
+	public boolean isSocketValid(String ip) {
+		String key = normalizeIp(ip);
+		ServerConnection c = connections.get(key);
+		return c != null && c.isHealthy();
+	}
+
+	/**
+	 * Fire-and-forget send. Non-blocking. If connection does not exist, returns false.
+	 */
+	public boolean send(String ip, String data) {
+		ServerConnection c = connections.get(normalizeIp(ip));
+		if (c == null || !c.isHealthy()) return false;
+		c.enqueueOutgoing(data);
+		try {
+			c.pollIncoming(DEFAULT_REQUEST_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
 			return false;
-		} else {
-			return true;
+		}
+		return true;
+	}
+
+	/**
+	 * Send and wait for a single-line response. Returns null on timeout/error.
+	 * This method assumes server replies in-order; the listener will enqueue incoming lines and this method will poll
+	 * the incoming queue for the next available line.
+	 */
+	public String request(String ip, String data, long timeoutMs) {
+		ServerConnection c = connections.get(normalizeIp(ip));
+		if (c == null || !c.isHealthy()) return null;
+		try {
+			c.enqueueOutgoing(data);
+			return c.pollIncoming(timeoutMs, TimeUnit.MILLISECONDS);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			return null;
 		}
 	}
 
-	public void sendDataToServer(String ip,String data) {
-		if(sockets.get(ip) == null) return;
-		// move this threads, thread map for ip?
-		try (
-			Socket socket = sockets.get(ip);
-			PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
-			BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream())))
-			{
-			out.println(data);
-
-
-			String response = in.readLine();
-
-		//	LOGGER.info(response);
-
-		} catch (Exception e) {
-				LOGGER.error("Exception occurred while sending the data:");
-				LOGGER.error(e.toString());
-			}
+	public String request(String ip, String data) {
+		return request(ip, data, DEFAULT_REQUEST_TIMEOUT_MS);
 	}
 
-	public String requestNResponse(String ip,String data){
-		if(sockets.get(ip) == null) return "DEADSOCKET";
-		// move this threads, thread map for ip?
-		try (
-			Socket socket = sockets.get(ip);
-			PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
-			BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream())))
-		{
-			out.println(data);
+	/**
+	 * Register a message handler that will receive unsolicited messages from the server.
+	 * Handler receives (ip, message).
+	 */
+	public void onMessage(BiConsumer<String, String> handler) {
+		// Broadcast handler to all connections
+		connections.values().forEach(conn -> conn.setMessageHandler(handler));
+	}
 
-			return in.readLine();
+	/**
+	 * Download a file from the server. This method will temporarily pause the normal listener for this connection
+	 * and read raw bytes from the socket input stream, writing them to 'dest'.
+	 *
+	 * WARNING: This is protocol-sensitive: server must begin streaming raw file bytes after the "download|filename" command.
+	 */
+	public boolean downloadFile(String ip, String filename, Path dest, long timeoutMs) {
+		ServerConnection c = connections.get(normalizeIp(ip));
+		if (c == null || !c.isHealthy()) return false;
+		try {
+			return c.downloadFile(filename, dest, timeoutMs);
+		} catch (IOException | InterruptedException e) {
+			LOGGER.error("Download failed for {}:{} -> {}", ip, filename, e.getMessage());
+			return false;
+		}
+	}
 
-		} catch (Exception e) {
-			LOGGER.error("Exception occurred while sending the data:");
-			LOGGER.error(e.toString());
-			return "EXCEPTION";
+	public void clearAll(String ip){
+		ServerConnection c = connections.get(normalizeIp(ip));
+		if (c == null || !c.isHealthy()) return;
+		c.clearAll();
+	}
+
+	public boolean downloadFile(String ip, String filename, Path dest) {
+		return downloadFile(ip, filename, dest, TimeUnit.SECONDS.toMillis(60));
+	}
+
+	/**
+	 * Close and remove connection
+	 */
+	public void disconnect(String ip) {
+		String key = normalizeIp(ip);
+		ServerConnection sc = connections.remove(key);
+		if (sc != null) sc.close();
+	}
+
+	public void shutdown() {
+		connections.values().forEach(ServerConnection::close);
+		connections.clear();
+		scheduler.shutdownNow();
+	}
+
+	private static String normalizeIp(String ip) {
+		if (ip == null) return "";
+		if (ip.contains(":")) return ip.substring(0, ip.indexOf(":"));
+		return ip;
+	}
+
+	private static class DownloadHandler {
+		private final Path dest;
+		private final long fileSize;
+		private final CountDownLatch done = new CountDownLatch(1);
+
+		DownloadHandler(Path dest, long fileSize) {
+			this.dest = dest;
+			this.fileSize = fileSize;
 		}
 
+		void consume(InputStream raw) throws IOException {
+			try (FileOutputStream fos = new FileOutputStream(dest.toFile())) {
+				byte[] buf = new byte[8192];
+				long remaining = fileSize;
+
+				while (remaining > 0) {
+					int n = raw.read(buf, 0, (int)Math.min(buf.length, remaining));
+					if (n < 0) throw new IOException("Unexpected EOF during download");
+					fos.write(buf, 0, n);
+					remaining -= n;
+				}
+			} finally {
+				done.countDown();
+			}
+		}
+
+		void awaitDone(long timeoutMs) throws InterruptedException {
+			if (!done.await(timeoutMs, TimeUnit.MILLISECONDS)) {
+				throw new InterruptedException("Download timeout");
+			}
+		}
 	}
 
-	public boolean isNthreadsDone() {
-		List<Boolean> listoft = new ArrayList<>();
+	// ----------------------
+	// Per-connection state
+	// ----------------------
+	private static class ServerConnection {
+		final String ip;
+		final int port;
+		Socket socket;
+		volatile boolean running = false;
 
-		if(MainNetwork.networkThreads == null) return true;
+		final BlockingQueue<String> outgoing = new LinkedBlockingQueue<>();
+		final BlockingQueue<String> incoming = new LinkedBlockingQueue<>();
+		final BlockingQueue<byte[]> incomingRaw = new LinkedBlockingQueue<>();
+		private final BlockingQueue<DownloadHandler> downloadQueue = new LinkedBlockingQueue<>();
+		private final ConcurrentHashMap<String, CompletableFuture<String>> pendingRequests = new ConcurrentHashMap<>();
+		private final AtomicLong requestCounter = new AtomicLong(0);
 
-		MainNetwork.networkThreads.forEach((id, thread) -> {
-			if (thread.getState() != Thread.State.RUNNABLE) {
-				listoft.add(true);
+		// Threads
+		Thread senderThread;
+		Thread listenerThread;
+
+		// Handler for unsolicited messages
+		volatile BiConsumer<String, String> messageHandler = null;
+
+
+
+		ServerConnection(String ip, int port, Socket socket) throws IOException {
+			this.ip = ip;
+			this.port = port;
+			this.socket = socket;
+		}
+
+		boolean isHealthy() {
+			return socket != null && socket.isConnected() && !socket.isClosed();
+		}
+
+		void start() throws IOException {
+			if (!isHealthy()) throw new IOException("Socket not connected");
+			running = true;
+
+			// sender thread
+			senderThread = new Thread(this::runSender, "[Net-Sender] " + ip);
+			senderThread.setDaemon(true);
+			senderThread.start();
+
+			// listener thread
+			listenerThread = new Thread(this::runListener, "[Net-Listener] " + ip);
+			listenerThread.setDaemon(true);
+			listenerThread.start();
+		}
+
+		void setMessageHandler(BiConsumer<String, String> handler) {
+			this.messageHandler = handler;
+		}
+
+		void enqueueOutgoing(String s) {
+			outgoing.offer(s);
+		}
+
+		void clearAll(){
+			incoming.clear();
+			incomingRaw.clear();
+			lineBuffer.reset();
+		}
+
+		String pollIncoming(long timeout, TimeUnit unit) throws InterruptedException {
+			incomingRaw.poll(timeout, unit);
+			String data = incoming.poll(timeout, unit);
+			return data == null ? "TIMEOUT" : data;
+		}
+
+		void runSender() {
+			try (PrintWriter out = new PrintWriter(socket.getOutputStream(), true)) {
+				while (running && !socket.isClosed()) {
+					try {
+						String msg = outgoing.take(); // blocks
+//							LOGGER.info(msg);
+						out.println(msg);
+						out.flush();
+					} catch (InterruptedException e) {
+						Thread.currentThread().interrupt();
+						break;
+					}
+				}
+			} catch (IOException e) {
+				LOGGER.error("Sender thread for {} stopped: {}", ip, e.getMessage());
+			} finally {
+				running = false;
 			}
-		});
+		}
+		ByteArrayOutputStream lineBuffer = new ByteArrayOutputStream();
+		void runListener() {
+			try {
+				InputStream in = socket.getInputStream();
+				byte[] buf = new byte[8192];
+				int read;
 
-		return listoft.size() == networkThreads.size();
+				while (running && (read = in.read(buf)) != -1) {
+					// Offer the raw bytes
+					byte[] rawChunk = Arrays.copyOf(buf, read);
+					incomingRaw.offer(rawChunk);
+
+					// Process lines for commands/messages
+					for (int i = 0; i < read; i++) {
+						byte b = buf[i];
+
+						if (b == '\n') {
+							String line = lineBuffer.toString(StandardCharsets.UTF_8);
+							if (line.endsWith("\r")) {
+								line = line.substring(0, line.length() - 1);
+							}
+							incoming.offer(line);
+							if (messageHandler != null) messageHandler.accept(ip, line);
+							lineBuffer.reset();
+						} else {
+							lineBuffer.write(b);
+						}
+					}
+				}
+			} catch (IOException e) {
+				LOGGER.error("Listener thread for {} stopped: {}", ip, e.getMessage());
+				try {
+					socket.close();
+				} catch (IOException ex) {
+					throw new RuntimeException(ex);
+				}
+			} finally {
+				running = false;
+			}
+		}
+
+
+
+		/**
+		 * Download file by pausing listener and reading raw bytes into 'dest'.
+		 */
+		boolean downloadFile(String filename, Path dest, long timeoutMs) throws IOException, InterruptedException {
+
+
+			try {
+				// Request download header via queue system
+				String header;
+				enqueueOutgoing("download|" + filename);
+				header = pollIncoming(timeoutMs, TimeUnit.MILLISECONDS);
+				if (header == null || !header.startsWith("filesize|")) {
+					throw new IOException("Invalid download header: " + header);
+				}
+
+				long fileSize = Long.parseLong(header.split("\\|")[1]);
+				incomingRaw.clear();
+
+				try (FileOutputStream fos = new FileOutputStream(dest.toFile())) {
+//						byte[] buf = new byte[8192];
+					long remaining = fileSize;
+
+					while (remaining > 0) {
+						byte[] data = incomingRaw.poll(timeoutMs, TimeUnit.MILLISECONDS);
+						if (data == null) throw new IOException("Unexpected EOF during download");
+						fos.write(data, 0, data.length);
+						remaining -= data.length;
+					}
+				}
+
+				incoming.clear();
+				incomingRaw.clear();
+
+				// Optionally validate ZIP
+				try (ZipFile z = new ZipFile(dest.toFile())) {
+					// OK
+				} catch (ZipException ze) {
+					LOGGER.error("Downloaded file is not a valid zip: {}", ze.getMessage());
+					Files.deleteIfExists(dest);
+					return false;
+				}
+
+				return true;
+			} finally {
+
+			}
+		}
+
+		void close() {
+			running = false;
+			try {
+				if (socket != null && !socket.isClosed()) socket.close();
+			} catch (IOException ignored) {
+			}
+		}
+	}
+
+	// ----------------------
+	// Helpers used by original codebase
+	// ----------------------
+	public String requestNResponse(String ip, String data) {
+		String res = request(ip, data, DEFAULT_REQUEST_TIMEOUT_MS);
+		if (res == null) return "EXCEPTION";
+		return res;
 	}
 
 	public boolean isDthreadsDone() {
-		List<Boolean> listoft = new ArrayList<>();
-
-		if(MainNetwork.downloadThreads == null) return true;
-
-		MainNetwork.downloadThreads.forEach((id, thread) -> {
-			if (thread.getState() != Thread.State.RUNNABLE) {
-				listoft.add(true);
-			}
-		});
-
-		return listoft.size() == MainNetwork.networkThreads.size();
+		return !downloadThreads.isEmpty();
 	}
 
-	public boolean isDthreadDone(String ip) {
-		if(MainNetwork.downloadThreads.get(ip) == null) return true;
-		return MainNetwork.downloadThreads.get(ip).getState() != Thread.State.RUNNABLE;
+	public boolean isDthreadDone(String ip, String id) {
+		return downloadThreads.get(ip + id) == null;
 	}
 
-	public void requestNDownload(String ip, String id){
+	// For exclusive operations like raw downloads
+	final ReentrantLock exclusiveLock = new ReentrantLock();
 
-		for (String s : ModMenu.idsDLD) {
-			if(Objects.equals(s, id)){
-				LOGGER.info("Mod {} already present", id);
-				return;
-			}
-		}
+	// A helper used in the original class to download by id
+	public void requestNDownload(String ip, String id) {
 
-		if(isModAlreadyPresent(id)){
+
+		if (ModMenu.idsDLD.contains(id) || isModAlreadyPresent(id)) {
 			LOGGER.info("Mod {} already present", id);
 			return;
 		}
 
-			do {
-				try {
-					Thread.sleep(250);
-				} catch (InterruptedException e) {
-					LOGGER.error("Interrupted: {}", e.getMessage());
-				}
-			} while (!isDthreadDone(ip));
-
-		Thread fD = new Thread(() -> {
+		// Run download in background thread
+		Thread downloadThread = new Thread(() -> {
 			try {
-				//PrintWriter out = new PrintWriter(sockets.get(ip).getOutputStream(), true);;
-//				if(sockets.get(ip) == null || sockets.get(ip).isClosed()){
+				if(id.contains("fabric-api") || id.contains("fabricloader") || id.contains("minecraft")) return;
 
-//				}
+				while(!exclusiveLock.tryLock()) {
 
-				connect(ip, ports.get(ip));
-				while(!isSocketValid(ip)){
-					if(Objects.equals(networkErrors.get(ip), "ERR")){
-						LOGGER.info("Connection Failed! Retrying one more time");
-						connect(ip, ports.get(ip));
-						while(!isSocketValid(ip)){
-							if(Objects.equals(networkErrors.get(ip), "ERR")){
-								LOGGER.error("FAILED to connect!");
-								return;
-							}
-						}
-					} else {
-						LOGGER.info("Waiting for connection {}", ip);
-					}
 				}
-
-
-
-
+				// ensure connection
+				int port = 27752; // default, change if you store ports
+				connect(ip, port);
+				clearAll(ip);
 				String fileN = requestNResponse(ip, "getmod|" + id);
-
 				if (fileN == null) {
-					LOGGER.error("Could finds not mod's filename! Mod does not exist as a file!");
+					LOGGER.error("Mod {} does not exist or skipped.", id);
+					networkErrors.put(ip+id, "ERR");
 					return;
 				}
 
-				if(fileN.contains("fabric-api")){
-				return;
+				Path modsFolder = Paths.get("./mods");
+				if (!Files.exists(modsFolder)) Files.createDirectories(modsFolder);
+				Path modFile = modsFolder.resolve(fileN);
+
+				boolean ok = downloadFile(ip, fileN, modFile, TimeUnit.SECONDS.toMillis(60));
+				if (!ok) {
+					LOGGER.error("Failed to download {}", fileN);
+					networkErrors.put(ip+id, "ERR");
+					return;
 				}
 
-				Path modsFolderPath = Paths.get("./mods");
-				if (!Files.exists(modsFolderPath)) {
-					try {
-						Files.createDirectories(modsFolderPath);
-					} catch (IOException e) {
-						LOGGER.error(e.toString());
-					}
-				}
+				// Check deps
+				checkAndDownloadDependencies(ip, modFile);
 
-
-
-				//Path filePath = modsFolderPath.resolve(fileN);
-				try {
-
-//					connect(ip, 27752);
-//					a = isSocketValid(ip);
-//					if (!a) {
-//						return;
-//					}
-//
-//					connect(ip, 27752);
-
-					File modsDir = new File("./mods");
-					if (!modsDir.exists()) {
-						modsDir.mkdirs();
-					}
-
-					File modFile = new File(modsDir, fileN);
-					try (BufferedOutputStream fileOut = new BufferedOutputStream(new FileOutputStream(modFile))) {
-						byte[] buffer = new byte[4096];
-						int bytesRead;
-
-//
-						connect(ip, ports.get(ip));
-						while(!isSocketValid(ip)){
-							LOGGER.info("Waiting for connection {}", ip);
-						}
-
-						PrintWriter out = null;
-						try {
-							out = new PrintWriter(sockets.get(ip).getOutputStream(), true);
-						} catch (IOException e) {
-							LOGGER.error(e.toString());
-						}
-						BufferedInputStream in = null;
-						try {
-							in = new BufferedInputStream(sockets.get(ip).getInputStream());
-						} catch (IOException e) {
-							LOGGER.error(e.toString());
-						}
-
-						out.println("download|" + fileN);
-
-						// Step 5: Read the file from the server and write it to the mods folder
-						while ((bytesRead = in.read(buffer)) != -1) {
-							fileOut.write(buffer, 0, bytesRead);
-						}
-
-						fileOut.close();
-
-						Thread depT = new Thread(() -> {
-							checkAndDownloadDependencies(ip, modFile.toPath());
-						});
-						depT.setName("Download Manager Dependency -" + depT.getId());
-						depT.start();
-						while (true) {
-							if (depT.getState() != Thread.State.RUNNABLE) {
-								break;
-							}
-						}
-
-						LOGGER.info("Mod downloaded successfully: " + fileN);
-
-						ModMenu.idsDLD.add(id);
-					} catch (IOException e) {
-						LOGGER.error("Error downloading mod: " + e.getMessage());
-						LOGGER.error(e.toString());
-						modFile.delete();
-					}
-				} catch (Exception e) {
-					LOGGER.error(e.toString());
-				}
-
-			} finally {
-
+				ModMenu.idsDLD.add(id);
+				boolean allHidden = ModMenu.buttonEntries.values().stream().allMatch(b -> !b.visible);
+				if (allHidden) ModMenu.isAllDFB = true;
+				LOGGER.info("Mod downloaded successfully: {}", fileN);
+				networkErrors.put(ip+id, "OK");
+			} catch (Exception e) {
+				LOGGER.error("Failed to download mod {}: {}", id, e.getMessage(), e);
+				networkErrors.put(ip+id, "ERR");
 			}
-		});
 
-		fD.setName("[ServerModMenu] Download Manager - "+ip+" - "+fD.getId());
-		MainNetwork.downloadThreads.put(ip, fD);
-		if(MainNetwork.downloadThreads.get(ip) != null){
-			MainNetwork.downloadThreads.get(ip).start();
-		}
 
-	}
 
-	public static boolean isModAlreadyPresent(String modName) {
-		Optional<ModContainer> modContainerOptional = FabricLoader.getInstance().getModContainer(modName);
-		if (modContainerOptional.isEmpty()) {
-			//System.out.println("Mod not found: " + modName);
-			Path modPath = Paths.get("./mods", modName + ".jar");
-			return Files.exists(modPath);
-		} else {
-			return true;
-		}
+			downloadThreads.remove(ip + id);
+			exclusiveLock.unlock();
+		}, "[ServerModMenu] Download Manager - " + ip +" " + id);
+
+		downloadThreads.put(ip + id, downloadThread);
+		downloadThread.setDaemon(true);
+		downloadThread.start();
 
 
 	}
 
+	// Reuse the original dependency logic (kept mostly intact, but runs in background)
 	private void checkAndDownloadDependencies(String ip, Path modFilePath) {
-
-		Thread td = new Thread(() ->  {
+		Thread td = new Thread(() -> {
 			try (JarFile jarFile = new JarFile(modFilePath.toFile())) {
 				ZipEntry entry = jarFile.getEntry("fabric.mod.json");
 				if (entry != null) {
@@ -323,423 +502,38 @@ public class Networking {
 
 							for (String dep : dependencies.keySet()) {
 								String depVersion = dependencies.get(dep).getAsString();
-								LOGGER.info("Dependency found: " + dep + " version: " + depVersion);
-								// Implement logic to download the dependency mod here
+								LOGGER.info("Dependency found: {} version: {}", dep, depVersion);
 								if (!isModAlreadyPresent(dep) && !Objects.equals(dep, "fabricloader")) {
-									requestNDownload(ip, dep); // Recursive call to download dependency
+									requestNDownload(ip, dep);
 								}
 							}
 						}
 					}
 				}
 			} catch (IOException e) {
-				LOGGER.error(e.toString());
-				LOGGER.error("Failed to read mod dependencies.");
+				LOGGER.error("Failed to read mod dependencies: {}", e.getMessage());
 			}
 		});
-
+		td.setDaemon(true);
 		td.start();
-		while(true) {
-			if(td.getState() != Thread.State.RUNNABLE){
+
+		// wait for thread to finish similarly to original code
+		while (td.getState() == Thread.State.RUNNABLE) {
+			try {
+				Thread.sleep(50);
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
 				break;
 			}
 		}
-
-		return;
-
 	}
 
-	public void reloadServer(String ip){
-		final SMod[][] ModsA = {{}};
-
-
-
-		if(ip.contains(":")){
-			ip = ip.substring(0, ip.indexOf(":"));
-		}
-		int port;
-
-		ServerAddress parsedAd = ServerAddress.parse(ip);
-
-		Optional<InetSocketAddress> optAddress = AllowedAddressResolver.DEFAULT.resolve(parsedAd).map(Address::getInetSocketAddress);
-		if(optAddress.isPresent()) {
-			final InetSocketAddress inetSocketAddress = (InetSocketAddress) optAddress.get();
-			//ip = inetSocketAddress.getHostName();
-			port = inetSocketAddress.getPort();
+	public static boolean isModAlreadyPresent(String modName) {
+		Optional<ModContainer> modContainerOptional = FabricLoader.getInstance().getModContainer(modName);
+		if (modContainerOptional.isEmpty()) {
+			return ModMenu.idsDLD.contains(modName);
 		} else {
-			port = 27752;
-		}
-
-		if(MainNetwork.networkThreads.get(ip) == null) {
-			LOGGER.info("Creating Network Thread - "+ip);
-			String finalIp = ip;
-			Thread fD = new Thread(() -> {
-				if (!MainNetwork.isSocketValid(finalIp)) {
-					MainNetwork.connect(finalIp, port);
-					boolean a = MainNetwork.isSocketValid(finalIp);
-					if (a) {
-						GsonBuilder gsonBuilder = new GsonBuilder();
-						gsonBuilder.registerTypeAdapter(SMod.class, new ModAdapter());
-						Gson gson = gsonBuilder.create();
-						String str = MainNetwork.requestNResponse(finalIp, "getall|"+MinecraftClient.getInstance().getSession().getUsername());
-						ModsA[0] = gson.fromJson(str, SMod[].class);
-						LOGGER.info(Arrays.toString(ModsA[0]));
-						boolean sinit = false;
-						if(ModsA[0].length < 1){
-							ModMenu.SMODS.computeIfAbsent(finalIp, k -> new HashMap<>());
-						}
-						for (SMod smod : ModsA[0]) {
-							if(!sinit){
-								ModMenu.SMODS.computeIfAbsent(finalIp, k -> new HashMap<>());
-								ModMenu.SMODSA = new HashMap<>();
-								sinit = true;
-							}
-
-							smod.server = finalIp;
-							ModMenu.SMODS.get(finalIp).put(smod.getId(), smod);
-
-
-						}
-					} else ModMenu.SMODS.computeIfAbsent(finalIp, k -> new HashMap<>());
-
-					;
-				} else if (!MainNetwork.isSocketValid(finalIp)) {
-					if (ModsA[0].length < 1) {
-						ModMenu.SMODS.computeIfAbsent(finalIp, k -> new HashMap<>());
-					}
-					LOGGER.error("Unable to connect to" + finalIp);
-				}
-				else {
-					boolean a = MainNetwork.isSocketValid(finalIp);
-					if(a) {
-						GsonBuilder gsonBuilder = new GsonBuilder();
-						gsonBuilder.registerTypeAdapter(SMod.class, new ModAdapter());
-						Gson gson = gsonBuilder.create();
-
-						String str = MainNetwork.requestNResponse(finalIp, "getall|"+MinecraftClient.getInstance().getSession().getUsername());
-						ModsA[0] = gson.fromJson(str, SMod[].class);
-						LOGGER.info(Arrays.toString(ModsA[0]));
-						boolean sinit = false;
-						if (ModsA[0].length < 1) {
-							ModMenu.SMODS.computeIfAbsent(finalIp, k -> new HashMap<>());
-						}
-						for (SMod smod : ModsA[0]) {
-							if (!sinit) {
-								ModMenu.SMODS.computeIfAbsent(finalIp, k -> new HashMap<>());
-								ModMenu.SMODSA = new HashMap<>();
-								sinit = true;
-							}
-
-							smod.server = finalIp;
-							ModMenu.SMODS.get(finalIp).put(smod.getId(), smod);
-						}
-					}
-				}
-			});
-			fD.setName("[ServerModMenu] Main network - " + ip+ " - "+ fD.getId());
-			MainNetwork.networkThreads.put(ip, fD);
-			MainNetwork.networkThreads.get(ip).start();
-
-		}else {
-			if(MainNetwork.networkThreads.get(ip).getState() != Thread.State.RUNNABLE) {
-				MainNetwork.networkThreads.remove(ip);
-				LOGGER.info("Creating Network Thread - "+ip);
-				String finalIp1 = ip;
-				Thread fD = new Thread(() -> {
-					if (!MainNetwork.isSocketValid(finalIp1)) {
-						MainNetwork.connect(finalIp1, port);
-						boolean a = MainNetwork.isSocketValid(finalIp1);
-						if (a) {
-							GsonBuilder gsonBuilder = new GsonBuilder();
-							gsonBuilder.registerTypeAdapter(SMod.class, new ModAdapter());
-							Gson gson = gsonBuilder.create();
-							String str = MainNetwork.requestNResponse(finalIp1, "getall|"+MinecraftClient.getInstance().getSession().getUsername());
-							ModsA[0] = gson.fromJson(str, SMod[].class);
-							LOGGER.info(Arrays.toString(ModsA[0]));
-							boolean sinit = false;
-							if(ModsA[0].length < 1){
-								ModMenu.SMODS.computeIfAbsent(finalIp1, k -> new HashMap<>());
-							}
-							for (SMod smod : ModsA[0]) {
-								if(!sinit){
-									ModMenu.SMODS.computeIfAbsent(finalIp1, k -> new HashMap<>());
-									ModMenu.SMODSA = new HashMap<>();
-									sinit = true;
-								}
-								smod.server = finalIp1;
-								ModMenu.SMODS.get(finalIp1).put(smod.getId(), smod);
-
-							}
-						} else ModMenu.SMODS.computeIfAbsent(finalIp1, k -> new HashMap<>());
-						;
-					} else if (!MainNetwork.isSocketValid(finalIp1))
-						LOGGER.error("Unable to connect to" + finalIp1);
-					else {
-						boolean a = MainNetwork.isSocketValid(finalIp1);
-						if(a) {
-							GsonBuilder gsonBuilder = new GsonBuilder();
-							gsonBuilder.registerTypeAdapter(SMod.class, new ModAdapter());
-							Gson gson = gsonBuilder.create();
-							String str = MainNetwork.requestNResponse(finalIp1, "getall|"+MinecraftClient.getInstance().getSession().getUsername());
-							ModsA[0] = gson.fromJson(str, SMod[].class);
-							LOGGER.info(Arrays.toString(ModsA[0]));
-							boolean sinit = false;
-							if (ModsA[0].length < 1) {
-								ModMenu.SMODS.computeIfAbsent(finalIp1, k -> new HashMap<>());
-							}
-							for (SMod smod : ModsA[0]) {
-								if (!sinit) {
-									ModMenu.SMODS.computeIfAbsent(finalIp1, k -> new HashMap<>());
-									ModMenu.SMODSA = new HashMap<>();
-									sinit = true;
-								}
-
-								smod.server = finalIp1;
-								ModMenu.SMODS.get(finalIp1).put(smod.getId(), smod);
-
-							}
-						}
-					}
-				});
-				fD.setName("[ServerModMenu] Main network - " + ip+ " - "+ fD.getId());
-				MainNetwork.networkThreads.put(ip, fD);
-				MainNetwork.networkThreads.get(ip).start();
-			}
-			else LOGGER.info("Waiting for thread - {} to finish!", MainNetwork.networkThreads.get(ip).getName());
-		}
-	}
-
-
-	public void reloadAllServers(ServerList serverList){
-
-		serverList.loadFile();
-		final SMod[][] ModsA = {{}};
-
-
-		for (int i = 0; i < serverList.size(); i++) {
-			ServerInfo serverInfo = serverList.get(i);
-			int port;
-
-			if(serverInfo.address.contains(":")){
-				serverInfo.address = serverInfo.address.substring(0, serverInfo.address.indexOf(":"));
-			} // a port found
-
-			Networking.ServerAddress parsedAd = Networking.ServerAddress.parse(serverInfo.address);
-
-			Optional<InetSocketAddress> optAddress = Networking.AllowedAddressResolver.DEFAULT.resolve(parsedAd).map(Address::getInetSocketAddress);
-			if(optAddress.isPresent()){
-				final InetSocketAddress inetSocketAddress = (InetSocketAddress) optAddress.get();
-
-				//serverInfo.address = inetSocketAddress.getAddress().getHostAddress();
-				port = inetSocketAddress.getPort();
-			} else {
-				port = 27752;
-			}
-
-			if(MainNetwork.networkThreads.get(serverInfo.address) == null) {
-				LOGGER.info("Creating Network Thread - "+serverInfo.address);
-				Thread fD = new Thread(() -> {
-					if (!MainNetwork.isSocketValid(serverInfo.address)) {
-						MainNetwork.connect(serverInfo.address, port);
-						boolean a = MainNetwork.isSocketValid(serverInfo.address);
-						if (a) {
-							GsonBuilder gsonBuilder = new GsonBuilder();
-							gsonBuilder.registerTypeAdapter(SMod.class, new ModAdapter());
-							Gson gson = gsonBuilder.create();
-							MainNetwork.connect(serverInfo.address, port);
-							String str = MainNetwork.requestNResponse(serverInfo.address, "getall|"+MinecraftClient.getInstance().getSession().getUsername());
-							ModsA[0] = gson.fromJson(str, SMod[].class);
-							LOGGER.info(Arrays.toString(ModsA[0]));
-							boolean sinit = false;
-							if(ModsA[0].length < 1){
-								ModMenu.SMODS.computeIfAbsent(serverInfo.address, k -> new HashMap<>());
-							}
-							for (SMod smod : ModsA[0]) {
-								if(!sinit){
-									ModMenu.SMODS.computeIfAbsent(serverInfo.address, k -> new HashMap<>());
-									ModMenu.SMODSA = new HashMap<>();
-									sinit = true;
-								}
-
-								smod.server = serverInfo.address;
-								ModMenu.SMODS.get(serverInfo.address).put(smod.getId(), smod);
-
-
-							}
-						} else ModMenu.SMODS.computeIfAbsent(serverInfo.address, k -> new HashMap<>());
-
-						;
-					} else if (!MainNetwork.isSocketValid(serverInfo.address)) {
-						if (ModsA[0].length < 1) {
-							ModMenu.SMODS.computeIfAbsent(serverInfo.address, k -> new HashMap<>());
-						}
-						LOGGER.error("Unable to connect to" + serverInfo.address);
-					}
-					else {
-						boolean a = MainNetwork.isSocketValid(serverInfo.address);
-						if(a) {
-							GsonBuilder gsonBuilder = new GsonBuilder();
-							gsonBuilder.registerTypeAdapter(SMod.class, new ModAdapter());
-							Gson gson = gsonBuilder.create();
-							MainNetwork.connect(serverInfo.address, port);
-							String str = MainNetwork.requestNResponse(serverInfo.address, "getall|"+MinecraftClient.getInstance().getSession().getUsername());
-							ModsA[0] = gson.fromJson(str, SMod[].class);
-							LOGGER.info(Arrays.toString(ModsA[0]));
-							boolean sinit = false;
-							if (ModsA[0].length < 1) {
-								ModMenu.SMODS.computeIfAbsent(serverInfo.address, k -> new HashMap<>());
-							}
-							for (SMod smod : ModsA[0]) {
-								if (!sinit) {
-									ModMenu.SMODS.computeIfAbsent(serverInfo.address, k -> new HashMap<>());
-									ModMenu.SMODSA = new HashMap<>();
-									sinit = true;
-								}
-
-								smod.server = serverInfo.address;
-								ModMenu.SMODS.get(serverInfo.address).put(smod.getId(), smod);
-							}
-						}
-					}
-				});
-				fD.setName("[ServerModMenu] Main network - " + serverInfo.address+ " - "+ fD.getId());
-				MainNetwork.networkThreads.put(serverInfo.address, fD);
-				MainNetwork.networkThreads.get(serverInfo.address).start();
-
-			} else {
-				if(MainNetwork.networkThreads.get(serverInfo.address).getState() != Thread.State.RUNNABLE) {
-					MainNetwork.networkThreads.remove(serverInfo.address);
-					LOGGER.info("Creating Network Thread - "+serverInfo.address);
-					Thread fD = new Thread(() -> {
-						if (!MainNetwork.isSocketValid(serverInfo.address)) {
-							MainNetwork.connect(serverInfo.address, port);
-							boolean a = MainNetwork.isSocketValid(serverInfo.address);
-							if (a) {
-								GsonBuilder gsonBuilder = new GsonBuilder();
-								gsonBuilder.registerTypeAdapter(SMod.class, new ModAdapter());
-								Gson gson = gsonBuilder.create();
-								MainNetwork.connect(serverInfo.address, port);
-								String str = MainNetwork.requestNResponse(serverInfo.address, "getall|"+MinecraftClient.getInstance().getSession().getUsername());
-								ModsA[0] = gson.fromJson(str, SMod[].class);
-								LOGGER.info(Arrays.toString(ModsA[0]));
-								boolean sinit = false;
-								if(ModsA[0].length < 1){
-									ModMenu.SMODS.computeIfAbsent(serverInfo.address, k -> new HashMap<>());
-								}
-								for (SMod smod : ModsA[0]) {
-									if(!sinit){
-										ModMenu.SMODS.computeIfAbsent(serverInfo.address, k -> new HashMap<>());
-										ModMenu.SMODSA = new HashMap<>();
-										sinit = true;
-									}
-
-									smod.server = serverInfo.address;
-									ModMenu.SMODS.get(serverInfo.address).put(smod.getId(), smod);
-
-								}
-							} else ModMenu.SMODS.computeIfAbsent(serverInfo.address, k -> new HashMap<>());
-							;
-						} else if (!MainNetwork.isSocketValid(serverInfo.address))
-							LOGGER.error("Unable to connect to" + serverInfo.address);
-						else {
-							boolean a = MainNetwork.isSocketValid(serverInfo.address);
-							if(a) {
-								GsonBuilder gsonBuilder = new GsonBuilder();
-								gsonBuilder.registerTypeAdapter(SMod.class, new ModAdapter());
-								Gson gson = gsonBuilder.create();
-								MainNetwork.connect(serverInfo.address, port);
-								String str = MainNetwork.requestNResponse(serverInfo.address, "getall|"+MinecraftClient.getInstance().getSession().getUsername());
-								ModsA[0] = gson.fromJson(str, SMod[].class);
-								LOGGER.info(Arrays.toString(ModsA[0]));
-								boolean sinit = false;
-								if (ModsA[0].length < 1) {
-									ModMenu.SMODS.computeIfAbsent(serverInfo.address, k -> new HashMap<>());
-								}
-								for (SMod smod : ModsA[0]) {
-									if (!sinit) {
-										ModMenu.SMODS.computeIfAbsent(serverInfo.address, k -> new HashMap<>());
-										ModMenu.SMODSA = new HashMap<>();
-										sinit = true;
-									}
-
-									smod.server = serverInfo.address;
-									ModMenu.SMODS.get(serverInfo.address).put(smod.getId(), smod);
-
-								}
-							}
-						}
-					});
-					fD.setName("[ServerModMenu] Main network - " + serverInfo.address+ " - "+ fD.getId());
-					MainNetwork.networkThreads.put(serverInfo.address, fD);
-					MainNetwork.networkThreads.get(serverInfo.address).start();
-				}
-				else LOGGER.info("Waiting for thread - {} to finish!", MainNetwork.networkThreads.get(serverInfo.address).getName());
-			}
-		}
-	}
-
-	public static class SocketStatusLoop implements Runnable {
-		private final String ip;
-		private int port = 27752;
-		public int status; // 0 = OK 1 = CONNECTING/BUSY 2 = OFFLINE
-		private boolean connected;
-		private boolean wasD = true;
-
-		public SocketStatusLoop(String ip){
-			if(ip.contains(":")){
-				ip = ip.substring(0, ip.indexOf(":"));
-			}
-			this.ip = ip;
-			long startTime = System.currentTimeMillis();
-
-			LOGGER.info("[ServerModMenu] Starting Socket Status Loop - {} - {}", Thread.currentThread().getId(), startTime);
-		}
-
-		public SocketStatusLoop(String ip, int Port){
-			if(ip.contains(":")){
-				ip = ip.substring(0, ip.indexOf(":"));
-			}
-			this.ip = ip;
-			this.port = Port;
-			long startTime = System.currentTimeMillis();
-
-			LOGGER.info("[ServerModMenu] Starting Socket Status Loop - {} - {}", Thread.currentThread().getId(), startTime);
-		}
-
-		@Override
-		public void run() {
-			while (true) {
-				try {
-					status = 1;
-					MainNetwork.connect(ip, port);
-					if(!MainNetwork.isSocketValid(ip)){
-						status = 2;
-						wasD = true;
-						Thread.sleep(8000);
-					} else {
-						String res = MainNetwork.requestNResponse(ip, "hello");
-						if (!Objects.equals(res, "ok")) {
-							wasD = true;
-							status = 2;
-						} else {
-							if(wasD){
-								MinecraftClient client = MinecraftClient.getInstance();
-								ServerList serverList = new ServerList(client);
-								ModMenu.sendmodstonetwork(serverList, client);
-								ModMenu.sendlocaletonetwork(serverList, client);
-							}
-							status = 0;
-							wasD = false;
-						}
-						if (status == 2) Thread.sleep(8500);
-						else Thread.sleep(4550);
-					}
-				} catch (InterruptedException e) {
-					LOGGER.error("Socket Status Loop interrupted: {}", e.getMessage());
-					Thread.currentThread().interrupt(); // Restore the interrupted status
-					break; // Exit the loop if interrupted
-				}
-			}
+			return true;
 		}
 	}
 
@@ -751,15 +545,14 @@ public class Networking {
 		}
 	}
 
-
 	public static class AllowedAddressResolver {
-		public static final Networking.AllowedAddressResolver DEFAULT;
-		private final Networking.AddressResolver addressResolver;
-		private final Networking.RedirectResolver redirectResolver;
+		public static final AllowedAddressResolver DEFAULT;
+		private final AddressResolver addressResolver;
+		private final RedirectResolver redirectResolver;
 		//private final BlockListChecker blockListChecker;
 
 		@VisibleForTesting
-		AllowedAddressResolver(Networking.AddressResolver addressResolver, Networking.RedirectResolver redirectResolver) {
+		AllowedAddressResolver(AddressResolver addressResolver, RedirectResolver redirectResolver) {
 			this.addressResolver = addressResolver;
 			this.redirectResolver = redirectResolver;
 		}
@@ -779,14 +572,14 @@ public class Networking {
 		}
 
 		static {
-			DEFAULT = new Networking.AllowedAddressResolver(Networking.AddressResolver.DEFAULT, Networking.RedirectResolver.createSrv());
+			DEFAULT = new AllowedAddressResolver(AddressResolver.DEFAULT, RedirectResolver.createSrv());
 		}
 	}
 
 
 	public interface AddressResolver {
 		Logger LOGGER = LogUtils.getLogger();
-		Networking.AddressResolver DEFAULT = (address) -> {
+		AddressResolver DEFAULT = (address) -> {
 			try {
 				InetAddress inetAddress = InetAddress.getByName(address.getAddress());
 				return Optional.of(Address.create(new InetSocketAddress(inetAddress, address.getPort())));
@@ -803,13 +596,13 @@ public class Networking {
 
 	public interface RedirectResolver {
 		Logger LOGGER = LogUtils.getLogger();
-		Networking.RedirectResolver INVALID = (address) -> {
+		RedirectResolver INVALID = (address) -> {
 			return Optional.empty();
 		};
 
 		Optional<ServerAddress> lookupRedirect(ServerAddress address);
 
-		static Networking.RedirectResolver createSrv() {
+		static RedirectResolver createSrv() {
 			InitialDirContext dirContext;
 			try {
 				String string = "com.sun.jndi.dns.DnsContextFactory";
@@ -846,7 +639,7 @@ public class Networking {
 	public static final class ServerAddress {
 		private static final Logger LOGGER = LogUtils.getLogger();
 		private final HostAndPort hostAndPort;
-		private static final Networking.ServerAddress INVALID = new Networking.ServerAddress(HostAndPort.fromParts("server.invalid", 25565));
+		private static final ServerAddress INVALID = new ServerAddress(HostAndPort.fromParts("server.invalid", 25565));
 
 		public ServerAddress(String host, int port) {
 			this(HostAndPort.fromParts(host, port));
@@ -868,13 +661,13 @@ public class Networking {
 			return this.hostAndPort.getPort();
 		}
 
-		public static Networking.ServerAddress parse(String address) {
+		public static ServerAddress parse(String address) {
 			if (address == null) {
 				return INVALID;
 			} else {
 				try {
 					HostAndPort hostAndPort = HostAndPort.fromString(address).withDefaultPort(27752);
-					return hostAndPort.getHost().isEmpty() ? INVALID : new Networking.ServerAddress(hostAndPort);
+					return hostAndPort.getHost().isEmpty() ? INVALID : new ServerAddress(hostAndPort);
 				} catch (IllegalArgumentException var2) {
 					IllegalArgumentException illegalArgumentException = var2;
 					LOGGER.info("Failed to parse URL {}", address, illegalArgumentException);

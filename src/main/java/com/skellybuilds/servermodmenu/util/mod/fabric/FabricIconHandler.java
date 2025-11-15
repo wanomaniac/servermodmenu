@@ -1,8 +1,10 @@
 package com.skellybuilds.servermodmenu.util.mod.fabric;
 
+import com.skellybuilds.servermodmenu.ModMenu;
 import net.fabricmc.loader.api.ModContainer;
 import net.minecraft.client.texture.NativeImage;
 import net.minecraft.client.texture.NativeImageBackedTexture;
+import net.minecraft.util.Identifier;
 import org.apache.commons.lang3.Validate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,7 +36,7 @@ public class FabricIconHandler implements Closeable {
 			try (InputStream inputStream = Files.newInputStream(path)) {
 				NativeImage image = NativeImage.read(Objects.requireNonNull(inputStream));
 				Validate.validState(image.getHeight() == image.getWidth(), "Must be square icon");
-				NativeImageBackedTexture tex = new NativeImageBackedTexture(image);
+				NativeImageBackedTexture tex = new NativeImageBackedTexture(() -> Identifier.of(ModMenu.MOD_ID, path.toString()).toString(), image);
 				cacheModIcon(path, tex);
 				return tex;
 			}

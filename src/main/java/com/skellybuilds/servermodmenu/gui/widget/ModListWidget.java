@@ -18,9 +18,10 @@ import net.minecraft.client.gui.widget.AlwaysSelectedEntryListWidget;
 import net.minecraft.client.render.BufferBuilder;
 import net.minecraft.client.render.GameRenderer;
 import net.minecraft.client.render.Tessellator;
-import net.minecraft.client.render.VertexFormat;
+//import net.minecraft.client.render.VertexFormat;
 import net.minecraft.client.render.VertexFormats;
 import net.minecraft.text.Text;
+import net.minecraft.util.Colors;
 import net.minecraft.util.math.MathHelper;
 import org.joml.Matrix4f;
 import org.lwjgl.glfw.GLFW;
@@ -45,8 +46,8 @@ public class ModListWidget extends AlwaysSelectedEntryListWidget<ModListEntry> i
 	private double scrollAm;
 	private int origT;
 
-	public ModListWidget(MinecraftClient client, int width, int height, int y1, int y2, int entryHeight, String searchTerm, ModListWidget list, ModsScreen parent) {
-		super(client, width, height, y1, y2, entryHeight);
+	public ModListWidget(MinecraftClient client, int width, int height, int y, int entryHeight, String searchTerm, ModListWidget list, ModsScreen parent) {
+		super(client, width, height, y, entryHeight);
 		this.parent = parent;
 		if(list != null) {
 			if (list.useSMod) {
@@ -58,19 +59,9 @@ public class ModListWidget extends AlwaysSelectedEntryListWidget<ModListEntry> i
 
 		}
 		this.filter(searchTerm, false);
-		setScrollAmount(parent.getScrollPercent() * Math.max(0, this.getMaxPosition() - (this.bottom - this.top - 4)));
+//		setScrollAmount(parent.getScrollPercent() * Math.max(0, this.getMaxPosition() - (this.getBottom() - this.getTop() - 4)));
 	}
 
-	@Override
-	public void setScrollAmount(double amount) {
-		super.setScrollAmount(amount);
-		int denominator = Math.max(0, this.getMaxPosition() - (this.bottom - this.top - 4));
-		if (denominator <= 0) {
-			parent.updateScrollPercent(0);
-		} else {
-			parent.updateScrollPercent(getScrollAmount() / Math.max(0, this.getMaxPosition() - (this.bottom - this.top - 4)));
-		}
-	}
 
 	@Override
 	public boolean isFocused() {
@@ -84,12 +75,12 @@ public class ModListWidget extends AlwaysSelectedEntryListWidget<ModListEntry> i
 					if(Objects.equals(entryM.serverName, server)){
 						this.setSelected(entryM);
 						if(entryM.renderSvnNO) return;
-						this.client.getNarratorManager().narrate(Text.translatable("narrator.select", entryM.smod.meta.name).getString());
+						this.client.getNarratorManager().narrate(Text.translatable("narrator.select", entryM.smod.meta.name));
 					}
 				} else {
 					if(Objects.equals(entryM.serverName, server)){
 					this.setSelected(entryM);
-					this.client.getNarratorManager().narrate(Text.translatable("narrator.select", entryM.mod.getTranslatedName()).getString());
+					this.client.getNarratorManager().narrate(Text.translatable("narrator.select", entryM.mod.getTranslatedName()));
 				}
 
 				}
@@ -284,9 +275,9 @@ public class ModListWidget extends AlwaysSelectedEntryListWidget<ModListEntry> i
 //				}
 //			}
 
-			if (getScrollAmount() > Math.max(0, this.getMaxPosition() - (this.bottom - this.top - 4))) {
-				setScrollAmount(Math.max(0, this.getMaxPosition() - (this.bottom - this.top - 4)));
-			}
+//			if (getScrollAmount() > Math.max(0, this.getMaxPosition() - (this.bottom - this.top - 4))) {
+//				setScrollAmount(Math.max(0, this.getMaxPosition() - (this.bottom - this.top - 4)));
+//			}
 			parent.calcServersSize();
 
 			isInit = true;
@@ -358,9 +349,9 @@ public class ModListWidget extends AlwaysSelectedEntryListWidget<ModListEntry> i
 				}
 			}
 
-			if (getScrollAmount() > Math.max(0, this.getMaxPosition() - (this.bottom - this.top - 4))) {
-				setScrollAmount(Math.max(0, this.getMaxPosition() - (this.bottom - this.top - 4)));
-			}
+//			if (getScrollAmount() > Math.max(0, this.getMaxPosition() - (this.bottom - this.top - 4))) {
+//				setScrollAmount(Math.max(0, this.getMaxPosition() - (this.bottom - this.top - 4)));
+//			}
 		}
 	}
 
@@ -368,9 +359,6 @@ public class ModListWidget extends AlwaysSelectedEntryListWidget<ModListEntry> i
 	@Override
 	protected void renderList(DrawContext DrawContext, int mouseX, int mouseY, float delta) {
 		int entryCount = this.getEntryCount();
-
-			Tessellator tessellator = Tessellator.getInstance();
-			BufferBuilder buffer = tessellator.getBuffer();
 
 
 if(isInit) {
@@ -393,43 +381,21 @@ if(isInit) {
 		int entryHeight = this.itemHeight - 4;
 
 		int rowWidth = this.getRowWidth();
-		int entryLeft;
+		int entryLeft = this.getRowLeft();
 		if(entry.moreY){
 		//	rowWidth = rowWidth + 8;
 		}
 		if (this.isSelectedEntry(index) && !entry.renderSvnNO) {
-
-			entryLeft = getRowLeft() - 2 + entry.getXOffset();
-			int selectionRight = this.getRowLeft() + rowWidth + 2;
-			RenderSystem.setShader(GameRenderer::getPositionProgram);
-			if(entry.smod.isOptional){
-				if(entry.smod.isDownloaded){
-					RenderSystem.setShaderColor(!this.isFocused() ? 0f : 0.2f , !this.isFocused() ? 0.107f : 0.156f, !this.isFocused() ? 0.5f : 0.9f, 1.0F);
-				} else {
-					RenderSystem.setShaderColor(!this.isFocused() ? 0.59f : 0.110f , !this.isFocused() ? 0.59f : 0.110f, !this.isFocused() ? 0.59f : 0.110f, 1.0F);
-				}
-			} else {
-				if(entry.smod.isDownloaded){
-					RenderSystem.setShaderColor(!this.isFocused() ? 0.2f : 0.4f , !this.isFocused() ? 0.163f : 0.214f, !this.isFocused() ? 0.42f : 0.57f, 1.0F);
-				} else {
-					RenderSystem.setShaderColor(!this.isFocused() ? 0.189f : 0.212f , !this.isFocused() ? 0.2f : 0.4f, !this.isFocused() ? 0.17f : 0.22f, 1.0F);
-				}
-			}
-			Matrix4f matrix = DrawContext.getMatrices().peek().getPositionMatrix();
-			buffer.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION);
-			buffer.vertex(matrix, entryLeft, entryTop + entryHeight + 2, 0.0F).next();
-			buffer.vertex(matrix, selectionRight, entryTop + entryHeight + 2, 0.0F).next();
-			buffer.vertex(matrix, selectionRight, entryTop - 2, 0.0F).next();
-			buffer.vertex(matrix, entryLeft, entryTop - 2, 0.0F).next();
-			tessellator.draw();
-			RenderSystem.setShader(GameRenderer::getPositionProgram);
-			RenderSystem.setShaderColor(0.0F, 0.0F, 0.0F, 1.0F);
-			buffer.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION);
-			buffer.vertex(matrix, entryLeft + 1, entryTop + entryHeight + 1, 0.0F).next();
-			buffer.vertex(matrix, selectionRight - 1, entryTop + entryHeight + 1, 0.0F).next();
-			buffer.vertex(matrix, selectionRight - 1, entryTop - 1, 0.0F).next();
-			buffer.vertex(matrix, entryLeft + 1, entryTop - 1, 0.0F).next();
-			tessellator.draw();
+			int entryContentLeft = entryLeft + entry.getXOffset() - 2;
+			int entryContentWidth = rowWidth - entry.getXOffset() + 4;
+			this.drawSelectionHighlight(
+				DrawContext,
+				entryContentLeft,
+				entryTop,
+				entryContentWidth,
+				entryHeight,
+				this.isFocused() ? Colors.WHITE : Colors.GRAY, Colors.BLACK
+			);
 		}
 
 		entryLeft = this.getRowLeft();
@@ -444,33 +410,33 @@ if(isInit) {
 		super.ensureVisible(entry);
 	}
 
-	@Override
-	protected void updateScrollingState(double double_1, double double_2, int int_1) {
-		super.updateScrollingState(double_1, double_2, int_1);
-		this.scrolling = int_1 == 0 && double_1 >= (double) this.getScrollbarPositionX() && double_1 < (double) (this.getScrollbarPositionX() + 6);
-	}
+//	@Override
+//	protected void updateScrollingState(double double_1, double double_2, int int_1) {
+//		super.updateScrollingState(double_1, double_2, int_1);
+//		this.scrolling = int_1 == 0 && double_1 >= (double) this.getScrollbarPositionX() && double_1 < (double) (this.getScrollbarPositionX() + 6);
+//	}
 
-	@Override
-	public boolean mouseClicked(double double_1, double double_2, int int_1) {
-		this.updateScrollingState(double_1, double_2, int_1);
-		if (!this.isMouseOver(double_1, double_2)) {
-			return false;
-		} else {
-			ModListEntry entry = this.getEntryAtPos(double_1, double_2);
-			if (entry != null) {
-				if (entry.mouseClicked(double_1, double_2, int_1)) {
-					this.setFocused(entry);
-					this.setDragging(true);
-					return true;
-				}
-			} else if (int_1 == 0) {
-				this.clickedHeader((int) (double_1 - (double) (this.left + this.width / 2 - this.getRowWidth() / 2)), (int) (double_2 - (double) this.top) + (int) this.getScrollAmount() - 4);
-				return true;
-			}
-
-			return this.scrolling;
-		}
-	}
+//	@Override
+//	public boolean mouseClicked(double double_1, double double_2, int int_1) {
+//		this.updateScrollingState(double_1, double_2, int_1);
+//		if (!this.isMouseOver(double_1, double_2)) {
+//			return false;
+//		} else {
+//			ModListEntry entry = this.getEntryAtPos(double_1, double_2);
+//			if (entry != null) {
+//				if (entry.mouseClicked(double_1, double_2, int_1)) {
+//					this.setFocused(entry);
+//					this.setDragging(true);
+//					return true;
+//				}
+//			} else if (int_1 == 0) {
+//				this.clickedHeader((int) (double_1 - (double) (this.left + this.width / 2 - this.getRowWidth() / 2)), (int) (double_2 - (double) this.top) + (int) this.getScrollAmount() - 4);
+//				return true;
+//			}
+//
+//			return this.scrolling;
+//		}
+//	}
 
 	public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
 		if (keyCode == GLFW.GLFW_KEY_UP || keyCode == GLFW.GLFW_KEY_DOWN) {
@@ -483,42 +449,42 @@ if(isInit) {
 	}
 
 	public final ModListEntry getEntryAtPos(double x, double y) {
-		int int_5 = MathHelper.floor(y - (double) this.top) - this.headerHeight + (int) this.getScrollAmount() - 4;
+		int int_5 = MathHelper.floor(y - (double) this.getY()) - this.headerHeight + (int) this.getScrollY() - 4;
 		int index = int_5 / this.itemHeight;
-		return x < (double) this.getScrollbarPositionX() && x >= (double) getRowLeft() && x <= (double) (getRowLeft() + getRowWidth()) && index >= 0 && int_5 >= 0 && index < this.getEntryCount() ? this.children().get(index) : null;
+		return x < (double) this.getScrollbarX() && x >= (double) getRowLeft() && x <= (double) (getRowLeft() + getRowWidth()) && index >= 0 && int_5 >= 0 && index < this.getEntryCount() ? this.children().get(index) : null;
 	}
 
-	@Override
-	protected int getScrollbarPositionX() {
-		return this.width - 6;
-	}
+//	@Override
+//	protected int getScrollbarPositionX() {
+//		return this.width - 6;
+//	}
 
 	@Override
 	public int getRowWidth() {
-		return this.width - (Math.max(0, this.getMaxPosition() - (this.bottom - this.top - 4)) > 0 ? 18 : 12);
+		return this.width - (Math.max(0, this.getContentsHeightWithPadding() - (this.getBottom() - this.getY() - 4)) > 0 ? 18 : 12);
 	}
 
 	@Override
 	public int getRowLeft() {
-		return left + 6;
+		return getX() + 6;
 	}
 
 	public int getWidth() {
 		return width;
 	}
 
-	public int getTop() {
-		return this.top;
-	}
+//	public int getTop() {
+//		return this.getTop();
+//	}
 
 	public ModsScreen getParent() {
 		return parent;
 	}
 
-	@Override
-	protected int getMaxPosition() {
-		return super.getMaxPosition() + 4;
-	}
+//	@Override
+//	protected int getMaxPosition() {
+//		return super.getMaxPosition() + 4;
+//	}
 
 	public int getDisplayedCountFor(Set<String> set) {
 		int count = 0;
@@ -534,6 +500,11 @@ if(isInit) {
 			}
 		}
 		return count;
+	}
+
+	protected void drawSelectionHighlight(DrawContext context, int x, int y, int width, int height, int borderColor, int fillColor) {
+		context.fill(x, y - 2, x + width, y + height + 2, borderColor);
+		context.fill(x + 1, y - 1, x + width - 1, y + height + 1, fillColor);
 	}
 
 	@Override

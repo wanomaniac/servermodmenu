@@ -1,6 +1,8 @@
 package com.skellybuilds.servermodmenu.gui;
 
+import com.mojang.blaze3d.pipeline.RenderPipeline;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gl.RenderPipelines;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.sound.PositionedSoundInstance;
 import net.minecraft.client.sound.SoundManager;
@@ -43,13 +45,36 @@ public class EntryButton {
 			return;
 		}
 
-		if(active) {
-			if (!hoverHandler(mouseX, mouseY))
-				dc.drawTexture(Texture, ButtonX, ButtonY, 0, 0, ButtonSX, ButtonSY, 32, 64);
-			else
-				dc.drawTexture(Texture, ButtonX, ButtonY, 0, 21, ButtonSX, ButtonSY, 32, 64);
-		} else
-			dc.drawTexture(Texture, ButtonX, ButtonY, 0, 42,ButtonSX, ButtonSY, 32, 64);
+		if (active) {
+			if (!hoverHandler(mouseX, mouseY)) {
+				dc.drawTexture(RenderPipelines.GUI_TEXTURED,
+					Texture,
+					ButtonX, ButtonY,
+					0, 0,
+					ButtonSX, ButtonSY,
+					32, 64
+				);
+			} else {
+				dc.drawTexture(
+					RenderPipelines.GUI_TEXTURED,
+					Texture,
+					ButtonX, ButtonY,
+					0, 21,
+					ButtonSX, ButtonSY,
+					32, 64
+				);
+			}
+		} else {
+			dc.drawTexture(
+				RenderPipelines.GUI_TEXTURED,
+				Texture,
+				ButtonX, ButtonY,
+				0, 42,
+				ButtonSX, ButtonSY,
+				32, 64
+			);
+		}
+
 
 	}
 

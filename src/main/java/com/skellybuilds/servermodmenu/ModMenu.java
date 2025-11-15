@@ -7,6 +7,7 @@ import com.google.gson.GsonBuilder;
 import com.skellybuilds.servermodmenu.api.ConfigScreenFactory;
 import com.skellybuilds.servermodmenu.config.ModMenuConfig;
 import com.skellybuilds.servermodmenu.config.ModMenuConfigManager;
+import com.skellybuilds.servermodmenu.db.ModAdapter;
 import com.skellybuilds.servermodmenu.db.SMod;
 import com.skellybuilds.servermodmenu.event.ModMenuEventHandler;
 import com.skellybuilds.servermodmenu.gui.EntryButton;
@@ -41,7 +42,7 @@ public class ModMenu implements ClientModInitializer {
 	public static final Gson GSON_MINIFIED = new GsonBuilder().setFieldNamingPolicy(FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES).create();
 	public static final List<String> idsDLD = new ArrayList<>();
 	public static final Map<String, EntryButton> buttonEntries = new HashMap<>();
-	public static final Map<String, Networking.SocketStatusLoop> socketLoops = new HashMap<>();
+//	public static final Map<String, Networking.SocketStatusLoop> socketLoops = new HashMap<>();
 	public static final Map<String, Map<String, SMod>> SMODS = new HashMap<>(); // Server Name - Mod Map
 	public static Map<String, SMod> SMODSA = new HashMap<>();
 	public static final Map<String, Mod> MODS = new HashMap<>();
@@ -116,7 +117,7 @@ public class ModMenu implements ClientModInitializer {
 
 				MainNetwork.connect(testS, inetSocketAddress.getPort());
 
-				MainNetwork.sendDataToServer(testS, "addploc|"+client.getSession().getUsername() + "|" +currentLanguageC);
+				MainNetwork.send(testS, "addploc|"+client.getSession().getUsername() + "|" +currentLanguageC);
 			}
 		}
 	}
@@ -146,7 +147,7 @@ public class ModMenu implements ClientModInitializer {
 				String data = "{\"playerN\":" + client.getSession().getUsername() + ", \"data\":" + stringArray.toString() + "}";
 				MainNetwork.connect(testS, inetSocketAddress.getPort());
 
-				MainNetwork.sendDataToServer(testS, "addpmods|" + data);
+				MainNetwork.send(testS, "addpmods|" + data);
 
 
 			} else {
@@ -157,11 +158,113 @@ public class ModMenu implements ClientModInitializer {
 
 				String data = "{\"playerN\":" + client.getSession().getUsername() + ", \"data\":" + stringArray.toString() + "}";
 				MainNetwork.connect(serverInfo.address, 27752);
-				MainNetwork.sendDataToServer(serverInfo.address, "addpmods|" + data);
+				MainNetwork.send(serverInfo.address, "addpmods|" + data);
 			}
 		}
 
 
+	}
+
+
+	public static void ConnectAndDetectPort(String serverIP, Networking network){
+			Networking.ServerAddress parsedAd = Networking.ServerAddress.parse(serverIP);
+
+			Optional<InetSocketAddress> optAddress = Networking.AllowedAddressResolver.DEFAULT.resolve(parsedAd).map(Address::getInetSocketAddress);
+			if(optAddress.isPresent()) {
+				final InetSocketAddress inetSocketAddress = (InetSocketAddress) optAddress.get();
+				network.connect(optAddress.get().getAddress().getHostAddress(), inetSocketAddress.getPort());
+
+			} else {
+				network.connect(optAddress.get().getAddress().getHostAddress(), 27752);
+			}
+	}
+
+	public static void LoadServerListConnections(ServerList list, Networking network){
+		final SMod[][] ModsA = {{}};
+		ModMenu.SMODS.clear();
+		list.loadFile();
+		for (int i = 0; i < list.size(); i++) {
+			ServerInfo serverInfo = list.get(i);
+
+			Networking.ServerAddress parsedAd = Networking.ServerAddress.parse(serverInfo.address);
+
+			Optional<InetSocketAddress> optAddress = Networking.AllowedAddressResolver.DEFAULT.resolve(parsedAd).map(Address::getInetSocketAddress);
+			if (optAddress.isPresent()) {
+				final InetSocketAddress inetSocketAddress = (InetSocketAddress) optAddress.get();
+				network.connect(optAddress.get().getAddress().getHostAddress(), inetSocketAddress.getPort());
+
+			} else {
+				network.connect(optAddress.get().getAddress().getHostAddress(), 27752);
+			}
+
+			if(!network.isSocketValid(optAddress.get().getAddress().getHostAddress())) continue;
+			try {
+				GsonBuilder gsonBuilder = new GsonBuilder();
+				gsonBuilder.registerTypeAdapter(SMod.class, new ModAdapter());
+				Gson gson = gsonBuilder.create();
+				String str = MainNetwork.requestNResponse(optAddress.get().getAddress().getHostAddress(), "getall|" + MinecraftClient.getInstance().getSession().getUsername());
+				ModsA[0] = gson.fromJson(str, SMod[].class);
+				LOGGER.info(Arrays.toString(ModsA[0]));
+				boolean sinit = false;
+				if (ModsA[0].length < 1) {
+					ModMenu.SMODS.computeIfAbsent(optAddress.get().getAddress().getHostAddress(), k -> new HashMap<>());
+				}
+				for (SMod smod : ModsA[0]) {
+					if (!sinit) {
+						ModMenu.SMODS.computeIfAbsent(optAddress.get().getAddress().getHostAddress(), k -> new HashMap<>());
+						ModMenu.SMODSA = new HashMap<>();
+						sinit = true;
+					}
+
+					smod.server = optAddress.get().getAddress().getHostAddress();
+					ModMenu.SMODS.get(optAddress.get().getAddress().getHostAddress()).put(smod.getId(), smod);
+				}
+			} catch (Exception e) {
+				continue;
+			}
+
+
+		}
+	}
+
+	public static void LoadServer(String ip, Networking network){
+	final SMod[][] ModsA = {{}};
+		Networking.ServerAddress parsedAd = Networking.ServerAddress.parse(ip);
+
+		Optional<InetSocketAddress> optAddress = Networking.AllowedAddressResolver.DEFAULT.resolve(parsedAd).map(Address::getInetSocketAddress);
+		if (optAddress.isPresent()) {
+			final InetSocketAddress inetSocketAddress = (InetSocketAddress) optAddress.get();
+			network.connect(optAddress.get().getAddress().getHostAddress(), inetSocketAddress.getPort());
+
+		} else {
+			network.connect(optAddress.get().getAddress().getHostAddress(), 27752);
+		}
+
+		if(network.isSocketValid(optAddress.get().getAddress().getHostAddress())) return;
+		try {
+			GsonBuilder gsonBuilder = new GsonBuilder();
+			gsonBuilder.registerTypeAdapter(SMod.class, new ModAdapter());
+			Gson gson = gsonBuilder.create();
+			String str = MainNetwork.requestNResponse(optAddress.get().getAddress().getHostAddress(), "getall|" + MinecraftClient.getInstance().getSession().getUsername());
+			ModsA[0] = gson.fromJson(str, SMod[].class);
+			LOGGER.info(Arrays.toString(ModsA[0]));
+			boolean sinit = false;
+			if (ModsA[0].length < 1) {
+				ModMenu.SMODS.computeIfAbsent(optAddress.get().getAddress().getHostAddress(), k -> new HashMap<>());
+			}
+			for (SMod smod : ModsA[0]) {
+				if (!sinit) {
+					ModMenu.SMODS.computeIfAbsent(optAddress.get().getAddress().getHostAddress(), k -> new HashMap<>());
+					ModMenu.SMODSA = new HashMap<>();
+					sinit = true;
+				}
+
+				smod.server = optAddress.get().getAddress().getHostAddress();
+				ModMenu.SMODS.get(optAddress.get().getAddress().getHostAddress()).put(smod.getId(), smod);
+			}
+		} catch (Exception e) {
+			return;
+		}
 	}
 
 	@Override
@@ -179,35 +282,7 @@ public class ModMenu implements ClientModInitializer {
 			}
 		});
 
-		MainNetwork.reloadAllServers(serverList);
-
-
-		serverList.loadFile();
-		for (int i = 0; i < serverList.size(); i++) {
-			ServerInfo serverInfo = serverList.get(i);
-
-			Networking.ServerAddress parsedAd = Networking.ServerAddress.parse(serverInfo.address);
-
-			Optional<InetSocketAddress> optAddress = Networking.AllowedAddressResolver.DEFAULT.resolve(parsedAd).map(Address::getInetSocketAddress);
-			if(optAddress.isPresent()) {
-				final InetSocketAddress inetSocketAddress = (InetSocketAddress) optAddress.get();
-				if (socketLoops.get(inetSocketAddress.getAddress().getHostAddress()) != null) {
-					new Thread(socketLoops.get(serverInfo.address)).start();
-				} else {
-					Networking.SocketStatusLoop loop = new Networking.SocketStatusLoop(serverInfo.address, inetSocketAddress.getPort());
-					socketLoops.put(serverInfo.address, loop);
-					new Thread(loop).start();
-				}
-			} else {
-				if (socketLoops.get(serverInfo.address) != null) {
-					new Thread(socketLoops.get(serverInfo.address)).start();
-				} else {
-					Networking.SocketStatusLoop loop = new Networking.SocketStatusLoop(serverInfo.address);
-					socketLoops.put(serverInfo.address, loop);
-					new Thread(loop).start();
-				}
-			}
-		}
+		LoadServerListConnections(serverList, MainNetwork);
 
 		ModMenuConfigManager.initializeConfig();
 		Set<String> modpackMods = new HashSet<>();
