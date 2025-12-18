@@ -5,17 +5,14 @@ bin
 .metadata
 .classpath
 .project
-classes
 
 # idea
 out
 *.ipr
 *.iws
 *.iml
-.idea
-
-# vscode
-.vscode
+.idea/*
+!.idea/scopes
 
 # gradle
 build
@@ -24,10 +21,6 @@ build
 # other
 eclipse
 run
-logs
+runs
+config
 
-Thumbs.db
-*.psd
-
-# SkellyStuff
-.gito/

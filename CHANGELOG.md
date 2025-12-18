@@ -1,0 +1,1 @@
+Some updates to support all (POPULAR) modloaders like forge, fabric and neoforge so server modding is easier everywhere. I think fabric builds work on quilt, hopefully.

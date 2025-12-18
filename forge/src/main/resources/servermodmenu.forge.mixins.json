@@ -1,0 +1,15 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.maniake.servermodmenu.mixin",
+  "compatibilityLevel": "JAVA_18",
+  "mixins": [],
+  "client": [
+    "MixinConnectScreen",
+    "MixinTitleScreen"
+  ],
+  "server": [],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
