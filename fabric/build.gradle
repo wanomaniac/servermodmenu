@@ -1,27 +1,30 @@
-buildscript {
-    dependencies {
-        classpath "fabric-loom:fabric-loom.gradle.plugin:1.11-SNAPSHOT"
-    }
-}
+//buildscript {
+//    dependencies {
+//            classpath "fabric-loom:fabric-loom.gradle.plugin:1.14-SNAPSHOT"
+//    }
+//}
 
 plugins {
     id 'multiloader-loader'
     id "com.modrinth.minotaur" version "2.+"
+    id "fabric-loom" version "1.13-SNAPSHOT"
 }
 
-if (parchment_version == null) {
+if (parchment_version == null && !VersionUtil.isVersionDeobfuscated(minecraft_version)) {
     project.tasks.configureEach { enabled = false }
     println "Skipping Fabric project as dependency isn't supported"
     return
 }
 
-apply plugin: 'fabric-loom'
+//apply plugin: 'fabric-loom'
 
 dependencies {
     minecraft "com.mojang:minecraft:${minecraft_version}"
     mappings loom.layered {
         officialMojangMappings()
-        parchment("org.parchmentmc.data:parchment-${parchment_minecraft}:${parchment_version}@zip")
+        if(!VersionUtil.isVersionDeobfuscated(minecraft_version)) {
+            parchment("org.parchmentmc.data:parchment-${parchment_minecraft}:${parchment_version}@zip")
+        }
     }
     modImplementation "net.fabricmc:fabric-loader:${fabric_loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${fabric_version}"

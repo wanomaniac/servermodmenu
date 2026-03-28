@@ -3,6 +3,7 @@ plugins {
     id 'maven-publish'
 }
 
+modrinthTOKEN = System.getenv("mToken")
 
 base {
     archivesName = "${mod_id}-${project.name}-${minecraft_version}"

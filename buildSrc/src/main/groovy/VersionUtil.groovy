@@ -1,6 +1,22 @@
 import org.gradle.api.GradleException
 
 class VersionUtil {
+    static boolean isVersionDeobfuscated(String mcVersion) {
+        return compareVersions(mcVersion, "1.21.11") >= 0
+    }
+
+    private static int compareVersions(String v1, String v2) {
+        def p1 = v1.tokenize('.').collect { it as int }
+        def p2 = v2.tokenize('.').collect { it as int }
+
+        int max = Math.max(p1.size(), p2.size())
+        for (int i = 0; i < max; i++) {
+            int a = i < p1.size() ? p1[i] : 0
+            int b = i < p2.size() ? p2[i] : 0
+            if (a != b) return a <=> b
+        }
+        return 0
+    }
     static boolean versionMatches(String rule, String mcVersion) {
         mcVersion = normalize(mcVersion)
         rule = rule.trim()
