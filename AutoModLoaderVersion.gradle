@@ -2,7 +2,6 @@ import groovy.json.JsonSlurper
 import groovy.json.JsonOutput
 import groovy.xml.XmlSlurper
 
-
 def normalizeMcVersion = { mcVersion ->
     def parts = mcVersion.tokenize(".")
     while (parts.size() < 3) parts << "0"
@@ -66,25 +65,18 @@ if (cache) {
     ext.forge_version = cache.forge_version
     ext.forge_loader_version_range = cache.forge_loader_version_range
     ext.neo_form_version = cache.neo_form_version
-    ext.parchment_minecraft = cache.parchment_minecraft
+    ext.parchment_minecraft = mcVersion
     ext.parchment_version = cache.parchment_version
 } else {
     // ------------------------------ PERCHANTMENT ------------------------------
-    if(!VersionUtil.isVersionDeobfuscated(mcVersion)) {
-        def perchantmentMeta = fetchXml("https://maven.parchmentmc.org/org/parchmentmc/data/parchment-${mcVersion}/maven-metadata.xml")
-        if (perchantmentMeta != null) {
-            ext.parchment_version = "$perchantmentMeta.versioning.release"
-            ext.parchment_minecraft = mcVersion
-        } else {
-            ext.parchment_version = null
-            ext.parchment_minecraft = mcVersion
-        }
+    def perchantmentMeta = fetchXml("https://maven.parchmentmc.org/org/parchmentmc/data/parchment-${mcVersion}/maven-metadata.xml")
+    if(perchantmentMeta != null) {
+        ext.parchment_version = "$perchantmentMeta.versioning.release"
+        ext.parchment_minecraft = mcVersion
     } else {
-        println("This version of minecraft is deobfuscated so using the last version")
-        ext.parchment_version = "2025.10.12"
-        ext.parchment_minecraft = "1.21.10"
+        ext.parchment_version = null
+        ext.parchment_minecraft = mcVersion
     }
-
     // ------------------------------ FABRIC ------------------------------
     def fabricMeta = fetchXml("https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/maven-metadata.xml")
     def fabricLoaderMeta = fetchJson("https://meta.fabricmc.net/v2/versions/loader/$mcVersion")
@@ -136,9 +128,9 @@ if (cache) {
     // ------------------------------ NEOFORM ------------------------------
     def neoformMeta = fetchXml("https://maven.neoforged.net/releases/net/neoforged/neoform/maven-metadata.xml")
     if(neoformMeta != null){
-    def allVersions = neoformMeta.versioning.versions.version*.text()
-    def neoformVersions = allVersions.findAll { it.startsWith(mcVersion) && !it.contains("unobfuscated") }
-    ext.neo_form_version = neoformVersions.max();
+        def allVersions = neoformMeta.versioning.versions.version*.text()
+        def neoformVersions = allVersions.findAll { it.startsWith(mcVersion) }
+        ext.neo_form_version = mcVersion == "1.21.11" ? "1.21.11-20251209.172050" : neoformVersions.max();
     } else {
         ext.neo_form_version = null;
     }
@@ -154,7 +146,6 @@ if (cache) {
             forge_loader_version_range: ext.forge_loader_version_range,
             neo_form_version: ext.neo_form_version,
             parchment_version: ext.parchment_version,
-            parchment_minecraft: mcVersion
     ])
 }
 
